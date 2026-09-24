@@ -12,12 +12,11 @@ const USAGE = `eda — a mind map you grow one node at a time with an AI that ca
   eda mcp                                                     MCP server + channel, spawned by Claude Code
   eda token                                                   the token the browser asks for`;
 
-/** The address a person on the LAN can open. Docker bridges are never it. */
+/** The address a person on the LAN can open. Container bridges are skipped by interface name, not by address range. */
 function lanIp(): string {
-  for (const list of Object.values(networkInterfaces())) {
-    for (const a of list ?? []) {
-      if (a.family === 'IPv4' && !a.internal && !/^172\.(1[6-9]|2\d|3[01])\./.test(a.address)) return a.address;
-    }
+  for (const [name, list] of Object.entries(networkInterfaces())) {
+    if (/^(docker|br-|veth|virbr|cni|flannel|podman)/.test(name)) continue;
+    for (const a of list ?? []) if (a.family === 'IPv4' && !a.internal) return a.address;
   }
   return '127.0.0.1';
 }

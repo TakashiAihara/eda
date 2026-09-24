@@ -24,7 +24,10 @@ type Target = { dir: string; base: string; attach?: boolean };
  * Where to reach a registered map. Only this host: the registry is a directory anyone
  * sharing `EDA_HOME` could write, and a record pointing elsewhere would receive the token.
  */
-function localBase(host: string, port: number): string | undefined {
+export function localBase(host: string, port: unknown): string | undefined {
+  // The record is JSON from disk: a port like "1@evil.example" would move the request elsewhere.
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+
   if (host === '0.0.0.0' || host === '::' || host === 'localhost' || host.startsWith('127.')) return `http://127.0.0.1:${port}`;
   const own = Object.values(networkInterfaces()).flatMap((l) => (l ?? []).map((a) => a.address));
   return own.includes(host) ? `http://${host.includes(':') ? `[${host}]` : host}:${port}` : undefined;

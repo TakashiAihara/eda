@@ -63,6 +63,8 @@ export type MapDoc = {
   sessions: SessionRef[];
   /** sha256 of the map.md eda last wrote. Anything else there was written by someone else. */
   mdHash: string;
+  /** The export before that one: finding it in map.md means a save was cut short, not an edit. */
+  prevMdHash?: string;
   seq: number;
 };
 

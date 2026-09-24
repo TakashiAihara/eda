@@ -203,6 +203,67 @@ test('a map.md edit saved while a request body is still arriving is read as an a
   }
 });
 
+test('a map.md left over from a save cut short is rewritten, not offered as an edit', async () => {
+  const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
+  const { addChild, removeNode } = await import('../src/map.ts');
+  const d4 = mkdtempSync(join(tmpdir(), 'eda-crash-'));
+  const doc = openMap(d4, 'c');
+  const n = addChild(doc, 'n1', 'gone soon');
+  saveMap(d4, doc);
+  const oldMd = readFileSync(join(d4, 'map.md'), 'utf8');
+  removeNode(doc, n.id);
+  saveMap(d4, doc);
+  // the crash: eda.json was written, map.md still the previous export
+  writeFileSync(join(d4, 'map.md'), oldMd);
+  syncMarkdown(d4, doc);
+  expect(doc.suggestions).toEqual([]);
+  expect(readFileSync(join(d4, 'map.md'), 'utf8')).toBe('# c\n\n');
+});
+
+test('registry records are only contacted on this host, on a numeric port', async () => {
+  const { localBase } = await import('../src/mcp.ts');
+  expect(localBase('0.0.0.0', 4000)).toBe('http://127.0.0.1:4000');
+  expect(localBase('127.0.0.1', '1@evil.example')).toBeUndefined();
+  expect(localBase('127.0.0.1', 70000)).toBeUndefined();
+  expect(localBase('203.0.113.9', 4000)).toBeUndefined();
+});
+
+test('eda mcp pushes the person\'s chat into the session as a channel event', async () => {
+  const { Client: McpClient } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const c = new McpClient({ name: 't', version: '0' });
+  const got: any[] = [];
+  c.fallbackNotificationHandler = async (n) => {
+    got.push(n);
+  };
+  // The server under test is registered like a real `eda serve`.
+  const { registerInstance } = await import('../src/store.ts');
+  const unregister = registerInstance({ pid: process.pid, dir, host: '127.0.0.1', port: server.port!, session: 'S1', startedAt: '' });
+  try {
+    await c.connect(
+      new StdioClientTransport({
+        command: 'bun',
+        args: [join(import.meta.dir, '../src/cli.ts'), 'mcp'],
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'S1' } as Record<string, string>,
+      }),
+    );
+    expect((await c.listTools()).tools.map((t) => t.name)).toEqual(['read_map', 'suggest_node', 'suggest_edit', 'reply']);
+    await Bun.sleep(2500);
+    await person('POST', '/api/chat', { text: 'over the channel', nodeId: 'n1' });
+    for (let i = 0; i < 40 && !got.length; i++) await Bun.sleep(100);
+    expect(got[0]?.method).toBe('notifications/claude/channel');
+    expect(got[0]?.params.content).toBe('over the channel\n\nAbout node n1: trip');
+    // The position is recorded right after the notification is written; give it a moment.
+    const want = Number(got[0].params.meta.chat_id.slice(1));
+    const delivered = () => JSON.parse(readFileSync(join(dir, 'eda.json'), 'utf8')).sessions.find((s: any) => s.id === 'S1').delivered;
+    for (let i = 0; i < 20 && delivered() !== want; i++) await Bun.sleep(100);
+    expect(delivered()).toBe(want);
+  } finally {
+    await c.close();
+    unregister();
+  }
+}, 15000);
+
 test('a session with no map is told how to start one', async () => {
   const lost = new Client('S9', '/w', () => []);
   await expect(runTool(lost, 'read_map', {})).rejects.toThrow(/eda serve/);

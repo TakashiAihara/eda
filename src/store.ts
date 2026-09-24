@@ -34,9 +34,12 @@ export function loadMap(dir: string): MapDoc | undefined {
 
 export function saveMap(dir: string, doc: MapDoc): void {
   const md = toMarkdown(doc.root);
-  doc.mdHash = sha(md);
-  // eda.json first: if the process dies in between, map.md still holds the person's edit
-  // and the next check offers it again (already-waiting candidates are not duplicated).
+  const next = sha(md);
+  if (next !== doc.mdHash) doc.prevMdHash = doc.mdHash;
+  doc.mdHash = next;
+  // eda.json first: if the process dies in between, map.md is either a person's edit (the
+  // next check offers it again; waiting candidates are not duplicated) or eda's previous
+  // export, which `syncMarkdown` recognises by `prevMdHash` and simply rewrites.
   writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(doc, null, 2)}\n`);
   writeAtomic(join(dir, MD_FILE), md);
 }
@@ -66,8 +69,9 @@ export function openMap(dir: string, title?: string): MapDoc {
 export function syncMarkdown(dir: string, doc: MapDoc): boolean {
   const p = join(dir, MD_FILE);
   const md = existsSync(p) ? readFileSync(p, 'utf8') : '';
-  if (sha(md) === doc.mdHash) return false;
-  if (md !== '') addCandidates(doc, diffOutline(doc, parseMarkdown(md)));
+  const h = sha(md);
+  if (h === doc.mdHash) return false;
+  if (md !== '' && h !== doc.prevMdHash) addCandidates(doc, diffOutline(doc, parseMarkdown(md)));
   saveMap(dir, doc);
   return true;
 }
