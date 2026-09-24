@@ -63,6 +63,8 @@ test('an edit suggestion changes text and attaches urls on adoption only', () =>
   expect(n.text).toBe('old');
   accept(d, t.id);
   expect(n.text).toBe('new');
+  expect(n.origin.by).toBe('human');
+  expect(n.editedBy).toEqual(ai);
 });
 
 test('an adoption that fails changes nothing', () => {
@@ -162,4 +164,23 @@ test('a map directory can be claimed by one live process at a time', async () =>
   (release as () => void)();
   writeFileSync(join(dir, 'eda.lock'), '999999999');
   expect(typeof lockMap(dir)).toBe('function');
+});
+
+test('processes racing for one map directory: exactly one wins', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'eda-race-'));
+  const go = join(dir, 'go');
+  const script = `
+    import { existsSync } from 'node:fs';
+    import { lockMap } from '${join(import.meta.dir, '../src/store.ts')}';
+    while (!existsSync('${go}')) await Bun.sleep(5);
+    const r = lockMap('${dir}');
+    console.log(typeof r === 'function' ? 'won' : 'lost');
+    await Bun.sleep(300);`;
+  const procs = Array.from({ length: 8 }, () => Bun.spawn(['bun', '-e', script], { stdout: 'pipe' }));
+  await Bun.sleep(400);
+  writeFileSync(go, '');
+  const out = await Promise.all(procs.map((p) => new Response(p.stdout).text()));
+  expect(out.filter((o) => o.trim() === 'won')).toHaveLength(1);
 });

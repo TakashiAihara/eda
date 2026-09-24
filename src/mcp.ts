@@ -65,12 +65,16 @@ export class Client {
       const base = localBase(i.host, i.port);
       return base === undefined ? [] : [{ dir: i.dir, base }];
     });
-    if (dir !== undefined) return running.filter((r) => r.dir === dir || r.dir.endsWith(`/${dir}`)).map((r) => ({ ...r, attach: true }));
+    if (dir !== undefined) {
+      const want = dir.replace(/\/+$/, '');
+      return running.filter((r) => r.dir === want || r.dir.endsWith(`/${want}`)).map((r) => ({ ...r, attach: true }));
+    }
     const mine: Target[] = [];
     for (const r of running) {
       try {
-        const s = (await this.call(r, '/api/state')) as { doc: MapDoc };
-        if (s.doc.sessions.some((x) => x.id === this.session)) mine.push(r);
+        // /api/rev, not /api/state: this runs for every running map on every channel pass.
+        const s = (await this.call(r, '/api/rev')) as { sessions: string[] };
+        if (s.sessions.includes(this.session)) mine.push(r);
       } catch {
         /* a server going down between the listing and the call */
       }
@@ -242,6 +246,8 @@ export async function runMcp(): Promise<void> {
           cursor.set(t.dir, Number(c.id.slice(1)));
           await client.call(t, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: c.id }) });
         }
+        // The rev read before this pass, even though recording a delivery bumps it: reading
+        // it again could swallow a message that arrived in between. Costs one extra fetch.
         revs.set(t.dir, rev);
       }
     } catch (err) {

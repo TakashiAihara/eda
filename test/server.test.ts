@@ -67,6 +67,7 @@ test('a hand edit of map.md is not applied: it comes back as candidates and the 
 });
 
 test('chat from the person is visible to Claude, and Claude replies without touching the map', async () => {
+  const before = JSON.stringify((await person('GET', '/api/state')).json.doc.root);
   await person('POST', '/api/chat', { text: 'what about budget?', nodeId: 'n1' });
   expect(await runTool(claude, 'reply', { text: 'set a ceiling first' })).toBe('posted');
   const doc = (await person('GET', '/api/state')).json.doc;
@@ -74,7 +75,7 @@ test('chat from the person is visible to Claude, and Claude replies without touc
     ['human', 'what about budget?'],
     ['ai', 'set a ceiling first'],
   ]);
-  expect(doc.root.children).toHaveLength(1);
+  expect(JSON.stringify(doc.root)).toBe(before);
 });
 
 test('asking whether a map is ours does not make it ours; naming it does', async () => {
@@ -82,7 +83,7 @@ test('asking whether a map is ours does not make it ours; naming it does', async
   const other = new Client('S2', '/x', registry);
   await expect(runTool(other, 'read_map', {})).rejects.toThrow(/no running map/);
   await expect(runTool(other, 'read_map', {})).rejects.toThrow(/no running map/);
-  await runTool(other, 'read_map', { map: dir });
+  await runTool(other, 'read_map', { map: `${dir}/` });
   expect(await runTool(other, 'read_map', {})).toContain('[n1] trip');
 });
 
@@ -116,7 +117,8 @@ test('the delivered position is stored per session on the map', async () => {
   await person('POST', '/api/chat', { text: 'ping' });
   const last = (await person('GET', '/api/state')).json.doc.chat.at(-1).id;
   await claude.call({ dir, base }, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: last }) });
-  const s1 = (await person('GET', '/api/state')).json.doc.sessions.find((s: any) => s.id === 'S1');
+  const onDisk = JSON.parse(readFileSync(join(dir, 'eda.json'), 'utf8'));
+  const s1 = onDisk.sessions.find((s: any) => s.id === 'S1');
   expect(s1.delivered).toBe(Number(last.slice(1)));
 });
 

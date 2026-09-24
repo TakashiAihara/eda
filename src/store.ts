@@ -7,7 +7,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { addCandidates, diffOutline, type MapDoc, newMap, parseMarkdown, toMarkdown } from './map.ts';
@@ -69,9 +69,27 @@ export function token(): string {
   const p = join(edaHome(), 'token');
   if (existsSync(p)) return readFileSync(p, 'utf8').trim();
   mkdirSync(edaHome(), { recursive: true });
-  const t = randomBytes(24).toString('base64url');
-  writeAtomic(p, `${t}\n`, 0o600);
-  return t;
+  // Created complete and exclusively: two first starts must end up with one token.
+  publish(p, `${randomBytes(24).toString('base64url')}\n`, 0o600);
+  return readFileSync(p, 'utf8').trim();
+}
+
+/**
+ * Put `body` at `path` only if nothing is there, with the content already in place when
+ * the name appears (write a temp file, hard-link it). Returns false if the name was taken.
+ */
+function publish(path: string, body: string, mode?: number): boolean {
+  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}`;
+  writeFileSync(tmp, body, mode === undefined ? undefined : { mode });
+  try {
+    linkSync(tmp, path);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    return false;
+  } finally {
+    unlinkSync(tmp);
+  }
 }
 
 export type Config = { kaneo?: { host: string } };
@@ -124,14 +142,14 @@ export function readInstances(): Instance[] {
 
 /**
  * Claim a map directory for this process. Two servers on one directory would each
- * overwrite the other's eda.json; `wx` makes the claim atomic, a dead owner's lock is taken over.
+ * overwrite the other's eda.json. The lock appears with the pid already in it (see
+ * `publish`), and a dead owner's lock is taken over.
  * Returns the release, or the pid that holds it.
  */
 export function lockMap(dir: string): (() => void) | number {
   const p = join(dir, 'eda.lock');
-  for (let i = 0; i < 2; i++) {
-    try {
-      writeFileSync(p, String(process.pid), { flag: 'wx' });
+  for (let i = 0; i < 3; i++) {
+    if (publish(p, String(process.pid))) {
       return () => {
         try {
           unlinkSync(p);
@@ -139,11 +157,20 @@ export function lockMap(dir: string): (() => void) | number {
           /* already gone */
         }
       };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      const owner = Number(readFileSync(p, 'utf8'));
-      if (owner && alive(owner)) return owner;
+    }
+    let owner = 0;
+    try {
+      owner = Number(readFileSync(p, 'utf8'));
+    } catch {
+      continue; // released between our attempt and the read
+    }
+    if (owner && alive(owner)) return owner;
+    // ponytail: two processes taking over the same dead lock at once can both unlink;
+    // one then wins the publish and the other sees it alive on its next turn.
+    try {
       unlinkSync(p);
+    } catch {
+      /* someone else took it over */
     }
   }
   throw new Error(`could not take ${p}`);

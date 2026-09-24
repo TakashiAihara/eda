@@ -24,7 +24,10 @@ export type Node = {
   urls: Url[];
   tasks: TaskLink[];
   collapsed?: boolean;
+  /** Who put the node there. */
   origin: Origin;
+  /** Who last changed its text through an adopted candidate, when that was not the author. */
+  editedBy?: Origin;
 };
 
 export type SuggestionSource = { by: 'ai'; session?: string; model?: string } | { by: 'md-edit' };
@@ -271,7 +274,10 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
   takeSuggestion(doc, id);
   const origin: Origin = s.source.by === 'ai' ? s.source : { by: 'md-edit' };
   const n = s.kind === 'add' ? addChild(doc, target.id, text!, origin) : target;
-  if (s.kind === 'edit' && text !== undefined) n.text = text;
+  if (s.kind === 'edit' && text !== undefined) {
+    n.text = text;
+    n.editedBy = origin;
+  }
   for (const u of urls) addUrl(doc, n.id, u, origin);
   if (s.kind === 'add') for (const c of s.children ?? []) addOutline(doc, n, c);
   return n;

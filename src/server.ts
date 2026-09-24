@@ -108,7 +108,7 @@ export function startServer(opts: ServeOptions) {
       '/api/state': {
         GET: api(false, () => ({ rev, dir: opts.dir, doc, kaneoHost })),
       },
-      '/api/rev': { GET: api(false, () => ({ rev })) },
+      '/api/rev': { GET: api(false, () => ({ rev, sessions: doc.sessions.map((s) => s.id) })) },
       '/api/nodes': {
         POST: api(true, async (req, d) => {
           const b = await body(req);

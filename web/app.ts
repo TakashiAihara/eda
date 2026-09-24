@@ -43,9 +43,10 @@ function restoreDrafts(): void {
   }
 }
 
-async function act(method: string, path: string, body?: unknown, sent?: string): Promise<void> {
+/** `sent`: the field and the text it held when sent; its draft is dropped only if unchanged since. */
+async function act(method: string, path: string, body?: unknown, sent?: [string | undefined, string]): Promise<void> {
   await api(method, path, body);
-  if (sent) drafts.delete(sent);
+  if (sent?.[0] !== undefined && drafts.get(sent[0]) === sent[1]) drafts.delete(sent[0]);
   await refresh(true);
 }
 
@@ -116,16 +117,16 @@ function renderNode(s: State): void {
   const n = hit.node;
   const base = `/api/nodes/${n.id}`;
   $('node').replaceChildren(
-    h('h2', {}, `ノード ${n.id} — ${originLabel(n.origin)}`),
-    h('input', { value: n.text, 'data-draft': `${n.id}:text`, keydown: onEnter((v, k) => act('PATCH', base, { text: v }, k)) }),
-    h('div', { class: 'row' }, h('input', { placeholder: '子ノードを追加 (Enter)', 'data-draft': `${n.id}:child`, keydown: onEnter((v, k) => act('POST', '/api/nodes', { parentId: n.id, text: v }, k)) })),
-    h('textarea', { placeholder: 'ノート', 'data-draft': `${n.id}:note`, change: (e) => act('PATCH', base, { note: val(e) }, `${n.id}:note`) }, n.note ?? ''),
+    h('h2', {}, `ノード ${n.id} — ${originLabel(n.origin)}${n.editedBy ? ` / 本文は${originLabel(n.editedBy).replace('を採用', 'で変更')}` : ''}`),
+    h('input', { value: n.text, 'data-draft': `${n.id}:text`, keydown: onEnter((v, k) => act('PATCH', base, { text: v }, [k, v])) }),
+    h('div', { class: 'row' }, h('input', { placeholder: '子ノードを追加 (Enter)', 'data-draft': `${n.id}:child`, keydown: onEnter((v, k) => act('POST', '/api/nodes', { parentId: n.id, text: v }, [k, v])) })),
+    h('textarea', { placeholder: 'ノート', 'data-draft': `${n.id}:note`, change: (e) => act('PATCH', base, { note: val(e) }, [`${n.id}:note`, val(e)]) }, n.note ?? ''),
     h('h2', {}, 'URL'),
     ...n.urls.map((u) =>
       h('div', { class: 'row' }, h('a', { href: u.url, target: '_blank', rel: 'noopener' }, u.url), u.origin.by === 'ai' ? h('span', { class: 'small' }, 'AI') : null,
         h('button', { 'aria-label': `URL ${u.url} を外す`, click: () => act('DELETE', `${base}/urls`, { url: u.url }) }, '✕')),
     ),
-    h('input', { placeholder: 'URL を添付 (Enter)', 'data-draft': `${n.id}:url`, keydown: onEnter((v, k) => act('POST', `${base}/urls`, { url: v }, k)) }),
+    h('input', { placeholder: 'URL を添付 (Enter)', 'data-draft': `${n.id}:url`, keydown: onEnter((v, k) => act('POST', `${base}/urls`, { url: v }, [k, v])) }),
     ...(s.kaneoHost === null
       ? []
       : [
@@ -134,7 +135,7 @@ function renderNode(s: State): void {
             h('div', { class: 'row' }, h('a', { href: kaneoTaskUrl(s.kaneoHost!, t), target: '_blank', rel: 'noopener' }, `${t.project} / ${t.task}`),
               h('button', { 'aria-label': `タスク ${t.task} のリンクを外す`, click: () => act('DELETE', `${base}/tasks`, { task: t.task }) }, '✕')),
           ),
-          h('input', { placeholder: 'kaneo のタスク URL を貼ってリンク (Enter)', 'data-draft': `${n.id}:task`, keydown: onEnter((v, k) => act('POST', `${base}/tasks`, { url: v }, k)) }),
+          h('input', { placeholder: 'kaneo のタスク URL を貼ってリンク (Enter)', 'data-draft': `${n.id}:task`, keydown: onEnter((v, k) => act('POST', `${base}/tasks`, { url: v }, [k, v])) }),
         ]),
     ...(hit.parent ? [h('div', { class: 'row' }, h('button', { click: () => confirm(`「${n.text}」と子ノードを消しますか`) && act('DELETE', base) }, 'このノードを削除'))] : []),
   );
