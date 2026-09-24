@@ -16,7 +16,7 @@ const USAGE = `eda — a mind map you grow one node at a time with an AI that ca
 function lanIp(): string {
   for (const list of Object.values(networkInterfaces())) {
     for (const a of list ?? []) {
-      if (a.family === 'IPv4' && !a.internal && !/^172\.(1[7-9]|2\d|3[01])\./.test(a.address)) return a.address;
+      if (a.family === 'IPv4' && !a.internal && !/^172\.(1[6-9]|2\d|3[01])\./.test(a.address)) return a.address;
     }
   }
   return '127.0.0.1';
@@ -36,6 +36,8 @@ async function main(argv: string[]): Promise<number> {
         return 2;
       }
       const dir = absDir(positionals[0]!);
+      // ponytail: check-then-register, so two serves started in the same instant both pass.
+      // Take a lock file in the map directory if that ever happens outside a test.
       const other = readInstances().find((i) => i.dir === dir);
       if (other) {
         // Two servers on one directory would each overwrite the other's eda.json.

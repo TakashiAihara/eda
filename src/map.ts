@@ -30,7 +30,18 @@ export type Node = {
 export type SuggestionSource = { by: 'ai'; session?: string; model?: string } | { by: 'md-edit' };
 
 export type Suggestion =
-  | { id: string; kind: 'add'; parentId: string; text: string; urls: string[]; reason: string; source: SuggestionSource; at: string }
+  | {
+      id: string;
+      kind: 'add';
+      parentId: string;
+      text: string;
+      urls: string[];
+      reason: string;
+      source: SuggestionSource;
+      at: string;
+      /** Only from map.md: the lines written under the new one, adopted together. */
+      children?: Outline[];
+    }
   | { id: string; kind: 'edit'; nodeId: string; text?: string; urls: string[]; reason: string; source: SuggestionSource; at: string };
 
 export type NewSuggestion = Suggestion extends infer S ? (S extends Suggestion ? Omit<S, 'id' | 'at'> : never) : never;
@@ -155,7 +166,13 @@ export function addUrl(doc: MapDoc, id: string, url: string, origin: Origin = { 
 
 export function removeUrl(doc: MapDoc, id: string, url: string): void {
   const n = must(doc, id).node;
-  n.urls = n.urls.filter((x) => x.url !== url);
+  let norm = url;
+  try {
+    norm = checkUrl(url);
+  } catch {
+    /* not a URL eda would have stored; compare as given */
+  }
+  n.urls = n.urls.filter((x) => x.url !== url && x.url !== norm);
 }
 
 export function addTask(doc: MapDoc, id: string, link: TaskLink): void {
@@ -189,7 +206,7 @@ export type AiInput =
 /**
  * Queue one suggestion from an AI.
  *
- * One pending suggestion per session is the structural half of "one node at a time":
+ * One pending suggestion per session (and per model, once models exist) is the structural half of "one node at a time":
  * a model that loops would otherwise pile up twenty candidates, which is the giant map
  * again with an extra click per node.
  */
@@ -239,20 +256,30 @@ function takeSuggestion(doc: MapDoc, id: string): Suggestion {
  * model's, and "which branches did I grow and which did I accept" is the question the
  * provenance exists to answer.
  */
-export function accept(doc: MapDoc, id: string, override?: { text?: string; urls?: string[] }): Node {
-  const s = takeSuggestion(doc, id);
+export function accept(doc: MapDoc, id: string, override?: { text?: string | null; urls?: string[] }): Node {
+  const s = doc.suggestions.find((x) => x.id === id);
+  if (!s) throw new MapError(`no suggestion ${id}`, 404);
+  // Everything that can fail is checked before anything changes: a half-adopted
+  // suggestion would leave a node in the map and the candidate gone.
+  const urls = (override?.urls ?? s.urls).map(checkUrl);
+  const raw = override?.text === null ? undefined : (override?.text ?? s.text);
+  const text = raw === undefined ? undefined : oneLine(raw);
+  const target = must(doc, s.kind === 'add' ? s.parentId : s.nodeId).node;
+  if (s.kind === 'add' && text === undefined) throw new MapError('text is empty');
+
+  takeSuggestion(doc, id);
   const origin: Origin = s.source.by === 'ai' ? s.source : { by: 'md-edit' };
-  const urls = override?.urls ?? s.urls;
-  const text = override?.text ?? s.text;
-  if (s.kind === 'add') {
-    const n = addChild(doc, s.parentId, text ?? '', origin);
-    for (const u of urls) addUrl(doc, n.id, u, origin);
-    return n;
-  }
-  const n = must(doc, s.nodeId).node;
-  if (text !== undefined) n.text = oneLine(text);
+  const n = s.kind === 'add' ? addChild(doc, target.id, text!, origin) : target;
+  if (s.kind === 'edit' && text !== undefined) n.text = text;
   for (const u of urls) addUrl(doc, n.id, u, origin);
+  if (s.kind === 'add') for (const c of s.children ?? []) addOutline(doc, n, c);
   return n;
+}
+
+/** A hand-written subtree from map.md, adopted with its parent. */
+function addOutline(doc: MapDoc, parent: Node, o: Outline): void {
+  const n = addChild(doc, parent.id, o.text, { by: 'md-edit' });
+  for (const c of o.children) addOutline(doc, n, c);
 }
 
 export function reject(doc: MapDoc, id: string): void {
@@ -317,11 +344,11 @@ export function parseMarkdown(md: string): Outline {
  * Turn an edit made to map.md behind eda's back into candidates.
  *
  * Children are matched by position: same slot with different text is an edit, slots past
- * the end are additions. Only the first new level becomes a candidate; its own children
- * can be offered once it has been adopted and has an id.
+ * the end are additions.
  *
  * ponytail: position matching reads an inserted-in-the-middle line as edits of every
  * sibling after it. Match by text first (LCS) if that turns out to be common.
+ * A new line keeps the lines written under it, so adopting it brings them along.
  * Deletions are not offered: removing is a person's click in the UI, not a candidate.
  */
 export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
@@ -335,7 +362,15 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
     e.children.forEach((ec, i) => {
       const c = n.children[i];
       if (!c) {
-        out.push({ kind: 'add', parentId: n.id, text: ec.text, urls: [], reason, source });
+        out.push({
+          kind: 'add',
+          parentId: n.id,
+          text: ec.text,
+          urls: [],
+          reason,
+          source,
+          ...(ec.children.length ? { children: ec.children } : {}),
+        });
         return;
       }
       if (c.text !== ec.text) out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
@@ -349,9 +384,8 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
 export function addCandidates(doc: MapDoc, found: NewSuggestion[]): void {
   const at = new Date().toISOString();
   for (const f of found) {
-    const dup = doc.suggestions.some(
-      (s) => s.source.by === 'md-edit' && s.kind === f.kind && JSON.stringify({ ...s, id: 0, at: 0 }) === JSON.stringify({ ...f, id: 0, at: 0 }),
-    );
+    const key = (s: NewSuggestion): string => `${s.kind}:${s.kind === 'add' ? s.parentId : s.nodeId}:${s.text ?? ''}`;
+    const dup = doc.suggestions.some((s) => s.source.by === 'md-edit' && key(s) === key(f));
     if (!dup) doc.suggestions.push({ ...f, id: nextId(doc, 's'), at } as Suggestion);
   }
 }

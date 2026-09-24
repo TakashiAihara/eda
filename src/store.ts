@@ -7,7 +7,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { addCandidates, diffOutline, type MapDoc, newMap, parseMarkdown, toMarkdown } from './map.ts';
@@ -95,8 +95,9 @@ function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // EPERM: alive, just someone else's.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
@@ -134,4 +135,8 @@ export function registerInstance(i: Instance): () => void {
   };
 }
 
-export const absDir = (dir: string): string => resolve(dir);
+/** The real path, so a symlink to a served map is recognised as the same map. */
+export function absDir(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  return realpathSync(resolve(dir));
+}

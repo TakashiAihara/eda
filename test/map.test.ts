@@ -1,5 +1,21 @@
 import { expect, test } from 'bun:test';
-import { accept, addChild, diffOutline, find, newMap, parseKaneoUrl, parseMarkdown, reject, removeNode, suggest, toMarkdown } from '../src/map.ts';
+import {
+  accept,
+  addChild,
+  addCandidates,
+  addUrl,
+  diffOutline,
+  find,
+  kaneoTaskUrl,
+  newMap,
+  parseKaneoUrl,
+  parseMarkdown,
+  reject,
+  removeNode,
+  removeUrl,
+  suggest,
+  toMarkdown,
+} from '../src/map.ts';
 
 const ai = { by: 'ai' as const, session: 'S1' };
 
@@ -42,6 +58,27 @@ test('an edit suggestion changes text and attaches urls on adoption only', () =>
   expect(n.urls[0]?.url).toBe('https://x.example/doc');
   expect(n.urls[0]?.origin.by).toBe('ai');
   expect(n.text).toBe('old');
+
+  const t = suggest(d, { kind: 'edit', nodeId: n.id, text: 'new', reason: '' }, ai);
+  expect(n.text).toBe('old');
+  accept(d, t.id);
+  expect(n.text).toBe('new');
+});
+
+test('an adoption that fails changes nothing', () => {
+  const d = newMap('plan');
+  const s = suggest(d, { kind: 'add', parentId: 'n1', text: 'x', reason: '' }, ai);
+  expect(() => accept(d, s.id, { urls: ['not a url'] })).toThrow(/http/);
+  expect(d.root.children).toHaveLength(0);
+  expect(d.suggestions.map((x) => x.id)).toEqual([s.id]);
+});
+
+test('a URL is removed by the form it was given in', () => {
+  const d = newMap('plan');
+  addUrl(d, 'n1', 'https://example.com');
+  expect(d.root.urls[0]?.url).toBe('https://example.com/');
+  removeUrl(d, 'n1', 'https://example.com');
+  expect(d.root.urls).toHaveLength(0);
 });
 
 test('suggestions validate their target and urls', () => {
@@ -56,6 +93,7 @@ test('removing a node drops suggestions aimed at it', () => {
   const n = addChild(d, 'n1', 'x');
   suggest(d, { kind: 'add', parentId: n.id, text: 'y', reason: '' }, ai);
   removeNode(d, n.id);
+  expect(d.root.children).toHaveLength(0);
   expect(d.suggestions).toHaveLength(0);
   expect(() => removeNode(d, 'n1')).toThrow(/root/);
 });
@@ -76,9 +114,19 @@ test('markdown round-trips and a hand edit becomes candidates, not changes', () 
     ['add', 'b'],
   ]);
   expect(find(d.root, a.id)?.node.text).toBe('a');
+
+  // the lines under a new line come with it
+  addCandidates(d, found);
+  const b = d.suggestions.find((s) => s.text === 'b')!;
+  const nb = accept(d, b.id);
+  expect(nb.children.map((c) => [c.text, c.origin.by])).toEqual([['b1', 'md-edit']]);
+  // the same hand edit seen twice is offered once
+  addCandidates(d, diffOutline(d, edited));
+  expect(d.suggestions.filter((s) => s.text === 'a2')).toHaveLength(1);
 });
 
 test('kaneo task URLs are parsed into ids', () => {
   expect(parseKaneoUrl('https://k.example/dashboard/workspace/W/project/P/task/T?x=1')).toEqual({ workspace: 'W', project: 'P', task: 'T' });
   expect(() => parseKaneoUrl('https://k.example/')).toThrow(/kaneo/);
+  expect(kaneoTaskUrl('https://k.example/', { workspace: 'W', project: 'P', task: 'T' })).toBe('https://k.example/dashboard/workspace/W/project/P/task/T');
 });

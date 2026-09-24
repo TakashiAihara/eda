@@ -32,14 +32,24 @@ type Handler = (req: Request, doc: MapDoc, params: Record<string, string>) => un
 export function startServer(opts: ServeOptions) {
   const doc = openMap(opts.dir, opts.title);
   const secret = token();
-  let rev = 0;
+  // Starts from the clock so a browser left open across a restart sees a new value.
+  let rev = Date.now();
+  const kaneoHost = config().kaneo?.host ?? null;
 
+  /**
+   * Record a Claude Code session on the map. Only on start and on an explicit attach:
+   * the MCP server also asks every running map "are you mine?", and recording on that
+   * question would make every map everyone's.
+   *
+   * Called after `syncMarkdown`, since saving first would overwrite a pending hand edit.
+   */
   const remember = (id: string | null, cwd: string | null): void => {
     if (!id || doc.sessions.some((s) => s.id === id)) return;
     doc.sessions.push({ id, cwd: cwd ?? '', at: new Date().toISOString() });
     saveMap(opts.dir, doc);
     rev += 1;
   };
+  syncMarkdown(opts.dir, doc);
   remember(opts.session ?? null, opts.cwd ?? null);
 
   const body = async (req: Request): Promise<Record<string, unknown>> => {
@@ -57,9 +67,9 @@ export function startServer(opts: ServeOptions) {
     (write: boolean, h: Handler) =>
     async (req: Request & { params?: Record<string, string> }): Promise<Response> => {
       if (req.headers.get('authorization') !== `Bearer ${secret}`) return Response.json({ error: 'unauthorized' }, { status: 401 });
-      remember(req.headers.get('x-eda-session'), req.headers.get('x-eda-cwd'));
       try {
         if (syncMarkdown(opts.dir, doc)) rev += 1;
+        if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), req.headers.get('x-eda-cwd'));
         const result = await h(req, doc, req.params ?? {});
         if (write) {
           saveMap(opts.dir, doc);
@@ -72,10 +82,16 @@ export function startServer(opts: ServeOptions) {
       }
     };
 
+  /**
+   * Who is suggesting. The session is required: it is the key of the one pending slot,
+   * and without it every caller would share a slot and leave no provenance.
+   * No model is taken from the request — several models are not built yet (see the
+   * design doc), and a caller-chosen label would be a way around the slot.
+   */
   const aiSource = (req: Request) => {
-    const session = req.headers.get('x-eda-session') ?? undefined;
-    const model = req.headers.get('x-eda-model') ?? undefined;
-    return { by: 'ai' as const, ...(session ? { session } : {}), ...(model ? { model } : {}) };
+    const session = req.headers.get('x-eda-session') ?? '';
+    if (session === '') throw new MapError('x-eda-session is required');
+    return { by: 'ai' as const, session };
   };
 
   const server = Bun.serve({
@@ -85,7 +101,7 @@ export function startServer(opts: ServeOptions) {
     routes: {
       '/': index,
       '/api/state': {
-        GET: api(false, () => ({ rev, dir: opts.dir, doc, kaneoHost: config().kaneo?.host ?? null })),
+        GET: api(false, () => ({ rev, dir: opts.dir, doc, kaneoHost })),
       },
       '/api/rev': { GET: api(false, () => ({ rev })) },
       '/api/nodes': {
@@ -117,7 +133,8 @@ export function startServer(opts: ServeOptions) {
       '/api/suggestions/:id/accept': {
         POST: api(true, async (req, d, p) => {
           const b = await body(req);
-          const text = str(b['text']);
+          // `text: null` keeps the node's text on an edit (the person cleared the box).
+          const text = b['text'] === null ? null : str(b['text']);
           const urls = strs(b['urls']);
           return accept(d, p['id']!, { ...(text === undefined ? {} : { text }), ...(urls === undefined ? {} : { urls }) });
         }),

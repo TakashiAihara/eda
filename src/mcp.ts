@@ -14,7 +14,8 @@ import { type Instance, readInstances, token } from './store.ts';
 
 const INTERVAL_MS = 2000;
 
-type Target = { dir: string; base: string };
+/** `attach`: this call names the map explicitly, so the server records the session on it. */
+type Target = { dir: string; base: string; attach?: boolean };
 
 const loopback = (host: string): string => (host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host);
 
@@ -29,14 +30,17 @@ export class Client {
   async call(t: Target, path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
     const res = await fetch(`${t.base}${path}`, {
       ...init,
+      // A hung server must not hold every tool call and the channel loop with it.
+      signal: AbortSignal.timeout(5000),
       headers: {
         authorization: `Bearer ${this.secret()}`,
         'content-type': 'application/json',
         'x-eda-session': this.session,
         'x-eda-cwd': this.cwd,
+        ...(t.attach ? { 'x-eda-attach': '1' } : {}),
       },
     });
-    const json = (await res.json()) as Record<string, unknown>;
+    const json = (await res.json().catch(() => ({ error: `${res.status} from ${t.base}${path}` }))) as Record<string, unknown>;
     if (!res.ok) throw new Error(String(json['error'] ?? res.statusText));
     return json;
   }
@@ -49,7 +53,7 @@ export class Client {
    */
   async targets(dir?: string): Promise<Target[]> {
     const running = this.instances().map((i) => ({ dir: i.dir, base: `http://${loopback(i.host)}:${i.port}` }));
-    if (dir !== undefined) return running.filter((r) => r.dir === dir || r.dir.endsWith(`/${dir}`));
+    if (dir !== undefined) return running.filter((r) => r.dir === dir || r.dir.endsWith(`/${dir}`)).map((r) => ({ ...r, attach: true }));
     const mine: Target[] = [];
     for (const r of running) {
       try {
@@ -184,7 +188,8 @@ export async function runMcp(): Promise<void> {
       capabilities: { tools: {}, experimental: { 'claude/channel': {} } },
       instructions: [
         'eda is a mind map the person grows one node at a time. You cannot write to it: you can read it, suggest one node, suggest one change to a node, and reply in its chat.',
-        'Do not edit map.md or eda.json yourself; the server discards such edits into the candidate list.',
+        'To start a map, run `eda serve <dir> --title "<theme>"` in the background and give the person the url it prints. It records this session, so read_map and the chat work from then on.',
+        'Do not edit map.md or eda.json yourself: map.md edits only come back as candidates for the person, and eda.json is overwritten by the server.',
         'Messages the person types in the map arrive as <channel source="eda" map="..." node_id="...">. Answer them with the reply tool, and when a node would help, offer exactly one with suggest_node.',
         'Wait for the person to adopt or reject a suggestion before suggesting again. Never try to build out the map.',
       ].join(' '),
@@ -207,29 +212,45 @@ export async function runMcp(): Promise<void> {
   process.stdin.on('close', exit);
 
   if (session === '') return;
-  // Per map: the last chat id pushed. A map seen for the first time starts at its end,
-  // so a resumed session is not flooded with the whole history.
+  // Per map: the last chat id pushed.
   const cursor = new Map<string, number>();
+  // Per map: the rev last read, so an unchanged map costs one small request per pass.
+  const revs = new Map<string, number>();
   for (;;) {
     try {
       for (const t of await client.targets()) {
+        const { rev } = (await client.call(t, '/api/rev')) as { rev: number };
+        if (revs.get(t.dir) === rev) continue;
         const state = (await client.call(t, '/api/state')) as { doc: MapDoc };
-        const humans = state.doc.chat.filter((c) => c.from === 'human');
-        const last = humans.length ? Number(humans[humans.length - 1]!.id.slice(1)) : 0;
-        const after = cursor.get(t.dir);
-        if (after === undefined) {
-          cursor.set(t.dir, last);
-          continue;
-        }
-        for (const c of humans.filter((x) => Number(x.id.slice(1)) > after)) {
+        for (const c of undelivered(state.doc, session, cursor.get(t.dir))) {
           await mcp.notification({ method: 'notifications/claude/channel', params: describe(t.dir, c, state.doc) });
-          // Advanced only once delivered, so a failed notification is retried next pass.
+          // Advanced once the notification is written. Claude Code does not acknowledge
+          // it, so this only covers a failed write (e.g. stdout closed), not a drop inside
+          // the session.
           cursor.set(t.dir, Number(c.id.slice(1)));
         }
+        revs.set(t.dir, rev);
       }
     } catch (err) {
       console.error(`eda: channel pass failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     await new Promise((r) => setTimeout(r, INTERVAL_MS));
   }
+}
+
+const num = (c: Chat): number => Number(c.id.slice(1));
+
+/**
+ * The person's messages to push. With no cursor yet (this process just started, or the
+ * session was resumed), that is what came after this session last answered, or since it
+ * joined the map if it never has: older messages are history, the rest still wait for it.
+ */
+export function undelivered(doc: MapDoc, session: string, after?: number): Chat[] {
+  const { chat } = doc;
+  if (after !== undefined) return chat.filter((c) => c.from === 'human' && num(c) > after);
+  const answered = chat.filter((c) => c.from === 'ai' && c.session === session);
+  if (answered.length) return chat.filter((c) => c.from === 'human' && num(c) > num(answered[answered.length - 1]!));
+  // Never answered here: what was written since the session joined the map.
+  const joined = doc.sessions.find((s) => s.id === session)?.at ?? '';
+  return chat.filter((c) => c.from === 'human' && c.at >= joined);
 }

@@ -5,8 +5,10 @@ import { join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'eda-home-'));
 process.env['EDA_HOME'] = home;
+// Never the real ~/.config/eda: a kaneo host there would change what the tests see.
+process.env['XDG_CONFIG_HOME'] = home;
 const { startServer } = await import('../src/server.ts');
-const { Client, runTool } = await import('../src/mcp.ts');
+const { Client, describe: describeChat, runTool, undelivered } = await import('../src/mcp.ts');
 const { token } = await import('../src/store.ts');
 
 const dir = mkdtempSync(join(tmpdir(), 'eda-map-'));
@@ -26,6 +28,8 @@ const claude = new Client('S1', '/w', () => [{ pid: 1, dir, host: '127.0.0.1', p
 
 test('the API refuses requests without the token', async () => {
   expect((await fetch(`${base}/api/state`)).status).toBe(401);
+  const w = await fetch(`${base}/api/nodes`, { method: 'POST', body: JSON.stringify({ parentId: 'n1', text: 'x' }) });
+  expect(w.status).toBe(401);
 });
 
 test('the page is served', async () => {
@@ -71,6 +75,64 @@ test('chat from the person is visible to Claude, and Claude replies without touc
     ['ai', 'set a ceiling first'],
   ]);
   expect(doc.root.children).toHaveLength(1);
+});
+
+test('asking whether a map is ours does not make it ours; naming it does', async () => {
+  const registry = () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }];
+  const other = new Client('S2', '/x', registry);
+  await expect(runTool(other, 'read_map', {})).rejects.toThrow(/no running map/);
+  await expect(runTool(other, 'read_map', {})).rejects.toThrow(/no running map/);
+  await runTool(other, 'read_map', { map: dir });
+  expect(await runTool(other, 'read_map', {})).toContain('[n1] trip');
+});
+
+test('attaching a session does not overwrite a pending hand edit of map.md', async () => {
+  writeFileSync(join(dir, 'map.md'), '# trip\n\n- hotel\n- visa\n');
+  const late = new Client('S3', '/y', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
+  await runTool(late, 'read_map', { map: dir });
+  const doc = (await person('GET', '/api/state')).json.doc;
+  expect(doc.suggestions.map((s: any) => s.text)).toContain('visa');
+});
+
+test('the channel sends what the session has not answered, or what came after it joined', () => {
+  const doc: any = {
+    sessions: [{ id: 'A', cwd: '', at: '2026-01-02' }],
+    chat: [
+      { id: 'c1', at: '2026-01-01', from: 'human', text: 'before A joined' },
+      { id: 'c2', at: '2026-01-03', from: 'human', text: 'to A' },
+      { id: 'c3', at: '2026-01-03', from: 'ai', session: 'B', text: 'B answered' },
+    ],
+  };
+  expect(undelivered(doc, 'A').map((c) => c.id)).toEqual(['c2']);
+  expect(undelivered(doc, 'B').map((c) => c.id)).toEqual([]);
+  doc.chat.push({ id: 'c4', at: '2026-01-04', from: 'human', text: 'new' });
+  expect(undelivered(doc, 'B').map((c) => c.id)).toEqual(['c4']);
+  expect(undelivered(doc, 'A', 2).map((c) => c.id)).toEqual(['c4']);
+});
+
+test('an AI call without a session is refused', async () => {
+  const r = await fetch(`${base}/api/ai/suggest`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ kind: 'add', parentId: 'n1', text: 'x', reason: '' }),
+  });
+  expect(r.status).toBe(400);
+});
+
+test('clearing the text box on an edit keeps the node text', async () => {
+  await runTool(claude, 'suggest_edit', { node_id: 'n1', text: 'renamed', urls: ['https://e.example/'], reason: 'r' });
+  const s = (await person('GET', '/api/state')).json.doc.suggestions.find((x: any) => x.source.by === 'ai');
+  await person('POST', `/api/suggestions/${s.id}/accept`, { text: null, urls: s.urls });
+  const doc = (await person('GET', '/api/state')).json.doc;
+  expect(doc.root.text).toBe('trip');
+  expect(doc.root.urls.map((u: any) => u.url)).toEqual(['https://e.example/']);
+});
+
+test('a channel event carries the message and the node it is about', () => {
+  const doc: any = { root: { id: 'n1', text: 'trip', children: [{ id: 'n2', text: 'hotel', children: [] }] } };
+  const e = describeChat('/m', { id: 'c7', at: '', from: 'human', nodeId: 'n2', text: 'cheaper?' }, doc);
+  expect(e.content).toBe('cheaper?\n\nAbout node n2: hotel');
+  expect(e.meta).toEqual({ map: '/m', chat_id: 'c7', node_id: 'n2' });
 });
 
 test('a session with no map is told how to start one', async () => {

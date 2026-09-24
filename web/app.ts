@@ -57,7 +57,7 @@ function renderHead(s: State): void {
   $('head').replaceChildren(
     h('h1', {}, s.doc.root.text),
     h('span', { class: 'meta' }, s.dir),
-    ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `claude --resume ${x.id}`))),
+    ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `${x.cwd ? `cd ${x.cwd} && ` : ''}claude --resume ${x.id}`))),
   );
 }
 
@@ -132,7 +132,9 @@ function renderCandidates(s: State): void {
     const adopt = () => {
       const t = text.value.trim();
       const u = urls.value.split(/\s+/).filter(Boolean);
-      return act('POST', `/api/suggestions/${x.id}/accept`, { ...(t === '' ? {} : { text: t }), urls: u });
+      // An emptied box on an edit means "keep the node's text", as its placeholder says.
+      const body = t !== '' ? { text: t } : x.kind === 'edit' ? { text: null } : {};
+      return act('POST', `/api/suggestions/${x.id}/accept`, { ...body, urls: u });
     };
     return h('div', { class: 'card ghost' },
       h('div', { class: 'small' }, `${who} — ${target}`),
@@ -196,4 +198,6 @@ if (TOKEN === '') document.body.textContent = 'token がありません。`eda s
 else {
   await refresh(true);
   setInterval(() => refresh().catch(() => {}), 1500);
+  // A section skipped while it had focus is drawn once focus leaves it.
+  document.addEventListener('focusout', () => setTimeout(() => state && render(state)));
 }
