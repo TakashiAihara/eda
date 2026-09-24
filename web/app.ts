@@ -13,6 +13,13 @@ const TOKEN = localStorage.getItem('eda-token') ?? '';
 let state: State | undefined;
 let selected = 'n1';
 
+/**
+ * An inline editor open on the map (XMind keys): a new child (Tab), a sibling after
+ * (Enter) or before (Shift+Enter), or the selected node's text (F2 / Space).
+ */
+type Editing = { kind: 'child' | 'after' | 'before' | 'rename'; id: string };
+let editing: Editing | null = null;
+
 async function api(method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(path, {
     method,
@@ -79,12 +86,34 @@ function renderHead(s: State): void {
   );
 }
 
+/** The selection, or the collapsed ancestor that hides it (XMind moves the selection there). */
+function visibleSelection(root: Node, id: string): string {
+  const path = (n: Node): Node[] | undefined => {
+    if (n.id === id) return [n];
+    for (const c of n.children) {
+      const p = path(c);
+      if (p) return [n, ...p];
+    }
+    return undefined;
+  };
+  const p = path(root) ?? [root];
+  const hidden = p.findIndex((n) => n.collapsed);
+  return hidden === -1 || hidden === p.length - 1 ? id : p[hidden]!.id;
+}
+
 function renderMap(s: State): void {
+  selected = visibleSelection(s.doc.root, selected);
   const pendingEdits = new Set(s.doc.suggestions.flatMap((x) => (x.kind === 'edit' ? [x.nodeId] : [])));
   const ghosts = (parentId: string): HTMLElement[] =>
     s.doc.suggestions
       .filter((x): x is Extract<Suggestion, { kind: 'add' }> => x.kind === 'add' && x.parentId === parentId)
-      .map((x) => h('li', {}, h('div', { class: 'node ghost', title: x.reason }, `? ${x.text}`)));
+      .map((x) =>
+        h('li', {},
+          // Clicking the ghost adopts it as written; rewriting first is the card in the sidebar.
+          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: (e) => decide(e, x.id, 'accept') }, x.text),
+          h('button', { type: 'button', class: 'fold', 'aria-label': `提案「${x.text}」を却下`, click: (e) => decide(e, x.id, 'reject') }, '✕'),
+        ),
+      );
 
   const item = (n: Node, root = false): HTMLElement => {
     const tags = [n.urls.length ? `🔗${n.urls.length}` : '', n.tasks.length ? `✓${n.tasks.length}` : '', n.note ? '📝' : '']
@@ -93,15 +122,24 @@ function renderMap(s: State): void {
     const cls = ['node', root ? 'root' : '', n.id === selected ? 'sel' : '', n.origin.by === 'ai' ? 'ai' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
       .filter(Boolean)
       .join(' ');
-    const box = h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) }, n.text, tags ? h('span', { class: 'tags' }, tags) : null);
+    const box =
+      editing?.kind === 'rename' && editing.id === n.id
+        ? editor(n.text)
+        : h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) }, n.text, tags ? h('span', { class: 'tags' }, tags) : null);
     const li = h('li', {}, box);
     if (n.children.length) {
       li.append(
         h('button', { class: 'fold', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) }, n.collapsed ? `+${n.children.length}` : '−'),
       );
     }
-    const kids = n.collapsed ? [] : [...n.children.map((c) => item(c)), ...ghosts(n.id)];
-    if (n.collapsed && ghosts(n.id).length) kids.push(...ghosts(n.id));
+    const kids: HTMLElement[] = [];
+    for (const c of n.collapsed ? [] : n.children) {
+      if (editing?.kind === 'before' && editing.id === c.id) kids.push(h('li', {}, editor('')));
+      kids.push(item(c));
+      if (editing?.kind === 'after' && editing.id === c.id) kids.push(h('li', {}, editor('')));
+    }
+    if (editing?.kind === 'child' && editing.id === n.id) kids.push(h('li', {}, editor('')));
+    kids.push(...ghosts(n.id));
     if (kids.length) li.append(h('ul', {}, ...kids));
     return li;
   };
@@ -174,7 +212,7 @@ function renderChat(s: State): void {
   const list = h('div', { class: 'msgs', id: 'msgs' },
     ...s.doc.chat.map((c) =>
       h('div', { class: `msg ${c.from}` },
-        h('div', { class: 'who' }, `${c.from === 'ai' ? 'AI' : 'あなた'}${c.nodeId ? ` — ${find(s.doc.root, c.nodeId)?.node.text ?? c.nodeId}` : ''}`),
+        h('div', { class: 'who' }, `${c.from === 'ai' ? 'AI' : c.from === 'system' ? 'eda' : 'あなた'}${c.nodeId ? ` — ${find(s.doc.root, c.nodeId)?.node.text ?? c.nodeId}` : ''}`),
         c.text),
     ),
   );
@@ -206,7 +244,8 @@ function renderChat(s: State): void {
 
 /** Sections the person is typing in are left alone; they are redrawn on the next change after. */
 function render(s: State, withMap = true): void {
-  if (withMap) {
+  // A redraw would drop what is being typed into the map's inline editor.
+  if (withMap && !editing) {
     renderHead(s);
     renderMap(s);
   }
@@ -239,4 +278,131 @@ else {
   // Only the sidebar: rebuilding the map here would detach a node button between the
   // mousedown that moved focus and the click.
   document.addEventListener('focusout', () => setTimeout(() => state && render(state, false)));
+}
+
+/** The inline editor. Enter commits, Esc or leaving it cancels. */
+function editor(initial: string): HTMLElement {
+  const input = h('input', { class: 'node edit', value: initial }) as HTMLInputElement;
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') return close();
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      void commit(input.value.trim());
+    }
+  });
+  // Not redrawn at once: the blur comes from the mousedown of a click elsewhere on the map,
+  // and redrawing now would detach that click's target. Redrawn after the click, or shortly.
+  input.addEventListener('blur', () => {
+    if (!editing) return;
+    editing = null;
+    const later = () => document.contains(input) && state && renderMap(state);
+    document.addEventListener('click', () => setTimeout(later), { once: true });
+    setTimeout(later, 300);
+  });
+  return input;
+}
+
+function close(): void {
+  editing = null;
+  if (state) renderMap(state);
+}
+
+async function commit(text: string): Promise<void> {
+  const e = editing;
+  if (!e || !state || text === '') return close();
+  editing = null;
+  if (e.kind === 'rename') {
+    await api('PATCH', `/api/nodes/${e.id}`, { text });
+  } else if (e.kind === 'child') {
+    selected = ((await api('POST', '/api/nodes', { parentId: e.id, text })) as Node).id;
+  } else {
+    const hit = find(state.doc.root, e.id);
+    if (!hit?.parent) return close();
+    const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
+    selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at })) as Node).id;
+  }
+  await refresh(true);
+}
+
+function open(kind: Editing['kind']): void {
+  if (!state) return;
+  const hit = find(state.doc.root, selected);
+  if (!hit) return;
+  // The root has no siblings; Enter on it adds a child, as in XMind.
+  editing = kind !== 'child' && kind !== 'rename' && !hit.parent ? { kind: 'child', id: selected } : { kind, id: selected };
+
+  renderMap(state);
+  // Focused synchronously: keys typed right after Tab would otherwise land nowhere.
+  // The selection can also sit inside a collapsed branch, where there is nowhere to put
+  // the editor; without the reset the keys would stay blocked by an editor nobody can see.
+  const input = document.querySelector<HTMLInputElement>('input.node.edit');
+  if (!input) editing = null;
+  else {
+    input.focus();
+    input.select();
+  }
+}
+
+/** XMind's keys, active while focus is on the map rather than in a text field. */
+document.addEventListener('keydown', (e) => {
+  const t = e.target as HTMLElement;
+  // Only the map's own selection: not a focused ghost / fold / reject button (their Enter
+  // and Space are theirs), not a text field, not the sidebar, and no modified keys other
+  // than Shift+Enter (Shift+Tab, Ctrl+- and the like belong to the browser).
+  if (editing || !state || t.closest('input, textarea, aside, .ghost, .fold')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || (e.shiftKey && e.key !== 'Enter' && e.key !== '+')) return;
+  const hit = find(state.doc.root, selected);
+  if (!hit) return;
+  const { node: n, parent } = hit;
+  const siblings = parent?.children ?? [n];
+  const i = siblings.findIndex((c) => c.id === n.id);
+  const go = (id: string | undefined) => {
+    e.preventDefault();
+    if (id) select(id);
+  };
+  switch (e.key) {
+    case 'Tab':
+      e.preventDefault();
+      return open('child');
+    case 'Enter':
+      e.preventDefault();
+      return open(e.shiftKey ? 'before' : 'after');
+    case 'F2':
+    case ' ':
+      e.preventDefault();
+      return open('rename');
+    case 'Delete':
+    case 'Backspace':
+      if (!parent) return;
+      e.preventDefault();
+      if (n.children.length && !confirm(`「${n.text}」と子ノード ${n.children.length} 件を消しますか`)) return;
+      selected = parent.id;
+      void act('DELETE', `/api/nodes/${n.id}`);
+      return;
+    case 'ArrowLeft':
+      return go(parent?.id);
+    case 'ArrowRight':
+      return go(n.collapsed ? undefined : n.children[0]?.id);
+    case 'ArrowUp':
+      return go(siblings[i - 1]?.id);
+    case 'ArrowDown':
+      return go(siblings[i + 1]?.id);
+    case '+':
+    case '=':
+    case '-':
+      if (!n.children.length) return;
+      e.preventDefault();
+      void act('PATCH', `/api/nodes/${n.id}`, { collapsed: e.key === '-' });
+      return;
+  }
+});
+
+/** Adopt or reject from the map. Both buttons go dead on the first click: a second would 404. */
+function decide(e: Event, id: string, what: 'accept' | 'reject'): void {
+  const li = (e.currentTarget as HTMLElement).closest('li');
+  for (const b of li?.querySelectorAll('button') ?? []) b.disabled = true;
+  void act('POST', `/api/suggestions/${id}/${what}`).catch(() => {
+    for (const b of li?.querySelectorAll('button') ?? []) b.disabled = false;
+  });
 }

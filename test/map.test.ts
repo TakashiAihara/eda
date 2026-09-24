@@ -199,3 +199,44 @@ test('processes racing for one map directory: exactly one wins', async () => {
   expect(out.filter((o) => o === 'won')).toHaveLength(1);
   expect(out.filter((o) => o === 'lost')).toHaveLength(7);
 });
+
+test('adopting or rejecting an AI suggestion leaves a note for the session that made it', () => {
+  const d = newMap('p');
+  const a = suggest(d, { kind: 'add', parentId: 'n1', text: 'x', reason: '' }, ai);
+  const n = accept(d, a.id, { text: 'y' });
+  const b = suggest(d, { kind: 'add', parentId: 'n1', text: 'z', reason: '' }, ai);
+  reject(d, b.id);
+  expect(d.chat.map((c) => [c.from, c.session, c.nodeId, c.text])).toEqual([
+    ['system', 'S1', n.id, `${a.id} 直して採用: 本文「y」 → ${n.id}`],
+    ['system', 'S1', 'n1', `${b.id} 却下: 「z」`],
+  ]);
+});
+
+test('the note says what actually went in when the person kept the text and dropped the URLs', () => {
+  const d = newMap('p');
+  const n = addChild(d, 'n1', 'original');
+  const s = suggest(d, { kind: 'edit', nodeId: n.id, text: 'replacement', urls: ['https://u.example/'], reason: '' }, ai);
+  accept(d, s.id, { text: null, urls: [] });
+  expect(n.text).toBe('original');
+  expect(d.chat.at(-1)?.text).toBe(`${s.id} 直して採用: 本文は変えず → ${n.id}`);
+  const t = suggest(d, { kind: 'add', parentId: 'n1', text: 'as is', reason: '' }, ai);
+  accept(d, t.id);
+  expect(d.chat.at(-1)?.text).toMatch(/^s\d+ 採用: 本文「as is」 → n\d+$/);
+});
+
+test('deleting the node a suggestion was aimed at tells the session it was cancelled', () => {
+  const d = newMap('p');
+  const n = addChild(d, 'n1', 'x');
+  const s = suggest(d, { kind: 'add', parentId: n.id, text: 'under x', reason: '' }, ai);
+  removeNode(d, n.id);
+  expect(d.chat.at(-1)).toMatchObject({ from: 'system', session: 'S1', nodeId: 'n1', text: `${s.id} 取り消し: 「under x」の対象ノードが削除された` });
+});
+
+test('a node can be inserted at a sibling index (Enter / Shift+Enter)', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'a');
+  addChild(d, 'n1', 'c');
+  addChild(d, 'n1', 'b', { by: 'human' }, 1);
+  addChild(d, 'n1', 'z', { by: 'human' }, 99);
+  expect(d.root.children.map((c) => c.text)).toEqual(['a', 'b', 'c', 'z']);
+});

@@ -49,7 +49,11 @@ export type Suggestion =
 
 export type NewSuggestion = Suggestion extends infer S ? (S extends Suggestion ? Omit<S, 'id' | 'at'> : never) : never;
 
-export type Chat = { id: string; at: string; from: 'human' | 'ai'; nodeId?: string; text: string; session?: string };
+/**
+ * `system`: eda telling the session that suggested something what the person did with it.
+ * `session` on a system line is the recipient; on an ai line it is the author.
+ */
+export type Chat = { id: string; at: string; from: 'human' | 'ai' | 'system'; nodeId?: string; text: string; session?: string };
 
 /** `delivered`: the last chat id the session's channel pushed, so a restart resumes there. */
 export type SessionRef = { id: string; cwd: string; at: string; delivered?: number };
@@ -133,10 +137,12 @@ function checkUrl(url: string): string {
 
 // ---- what a person does -------------------------------------------------
 
-export function addChild(doc: MapDoc, parentId: string, text: string, origin: Origin = { by: 'human' }): Node {
+/** `index`: where among the siblings (Enter / Shift+Enter insert next to the selected one); the end when omitted. */
+export function addChild(doc: MapDoc, parentId: string, text: string, origin: Origin = { by: 'human' }, index?: number): Node {
   const parent = must(doc, parentId).node;
   const n = node(nextId(doc, 'n'), text, origin);
-  parent.children.push(n);
+  if (index === undefined || index < 0 || index > parent.children.length) parent.children.push(n);
+  else parent.children.splice(index, 0, n);
   parent.collapsed = false;
   return n;
 }
@@ -163,10 +169,11 @@ export function removeNode(doc: MapDoc, id: string): void {
   const { parent } = must(doc, id);
   if (!parent) throw new MapError('the root cannot be removed');
   parent.children = parent.children.filter((c) => c.id !== id);
-  // A suggestion aimed at a node that is gone could never be adopted.
-  doc.suggestions = doc.suggestions.filter(
-    (s) => (s.kind === 'add' ? find(doc.root, s.parentId) : find(doc.root, s.nodeId)) !== undefined,
-  );
+  // A suggestion aimed at a node that is gone could never be adopted. The session that made
+  // it is waiting for an outcome, so it is told rather than left waiting.
+  const gone = doc.suggestions.filter((s) => find(doc.root, s.kind === 'add' ? s.parentId : s.nodeId) === undefined);
+  doc.suggestions = doc.suggestions.filter((s) => !gone.includes(s));
+  for (const s of gone) decided(doc, s, `取り消し: 「${s.text ?? s.urls.join(' ')}」の対象ノードが削除された`, parent.id);
 }
 
 export function addUrl(doc: MapDoc, id: string, url: string, origin: Origin = { by: 'human' }): void {
@@ -221,12 +228,15 @@ export type AiInput =
  * a model that loops would otherwise pile up twenty candidates, which is the giant map
  * again with an extra click per node.
  */
+/** How many AI suggestions one session may have waiting. Open question D-12 (1 = the requirement as written). */
+export const MAX_PENDING = 1;
+
 export function suggest(doc: MapDoc, input: AiInput, source: { by: 'ai'; session?: string; model?: string }): Suggestion {
-  const waiting = doc.suggestions.find(
+  const waiting = doc.suggestions.filter(
     (s) => s.source.by === 'ai' && s.source.session === source.session && s.source.model === source.model,
   );
-  if (waiting) {
-    throw new MapError(`suggestion ${waiting.id} is still waiting for the person; one at a time`, 409);
+  if (waiting.length >= MAX_PENDING) {
+    throw new MapError(`${waiting.map((w) => w.id).join(', ')} still waiting for the person; one at a time`, 409);
   }
   const urls = (input.urls ?? []).map(checkUrl);
   const reason = input.reason.trim();
@@ -287,7 +297,21 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
   }
   for (const u of urls) addUrl(doc, n.id, u, origin);
   if (s.kind === 'add') for (const c of s.children ?? []) addOutline(doc, n, c);
+  // What actually went in, which is not always what was suggested: the person may have
+  // rewritten the text, kept the node's text, or changed the URLs.
+  const parts = [
+    s.kind === 'add' || text !== undefined ? `本文「${n.text}」` : '本文は変えず',
+    ...(urls.length ? [`URL ${urls.join(' ')}`] : []),
+  ];
+  const changed = (text !== undefined && text !== s.text) || (s.kind === 'edit' && text === undefined && s.text !== undefined) || JSON.stringify(urls) !== JSON.stringify(s.urls);
+  decided(doc, s, `${changed ? '直して採用' : '採用'}: ${parts.join(' / ')} → ${n.id}`, n.id);
   return n;
+}
+
+/** Tell the session that made an AI suggestion what happened to it, through the chat its channel reads. */
+function decided(doc: MapDoc, s: Suggestion, text: string, nodeId: string): void {
+  if (s.source.by !== 'ai' || s.source.session === undefined) return;
+  doc.chat.push({ id: nextId(doc, 'c'), at: new Date().toISOString(), from: 'system', nodeId, text: `${s.id} ${text}`, session: s.source.session });
 }
 
 /** A hand-written subtree from map.md, adopted with its parent. */
@@ -297,7 +321,8 @@ function addOutline(doc: MapDoc, parent: Node, o: Outline): void {
 }
 
 export function reject(doc: MapDoc, id: string): void {
-  takeSuggestion(doc, id);
+  const s = takeSuggestion(doc, id);
+  decided(doc, s, `却下: 「${s.text ?? s.urls.join(' ')}」`, s.kind === 'add' ? s.parentId : s.nodeId);
 }
 
 export function say(doc: MapDoc, from: 'human' | 'ai', text: string, nodeId?: string, session?: string): Chat {

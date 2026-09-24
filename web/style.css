@@ -56,9 +56,11 @@ a { color: var(--accent); word-break: break-all; }
 .node.sel { outline: 2px solid var(--accent); }
 .node.ai { border-color: var(--ai); }
 .node .tags { color: var(--muted); font-size: 11px; margin-left: 6px; }
-.node.ghost { border-style: dashed; border-color: var(--ghost); color: var(--ghost); }
+.node.ghost { border-style: dashed; border-color: var(--ghost); opacity: 0.55; }
+.node.ghost:hover { opacity: 0.9; }
 .node.pending-edit { box-shadow: 0 0 0 2px var(--ghost); }
 .fold { margin-left: 4px; font-size: 11px; padding: 0 5px; }
+.node.edit { width: 16em; cursor: text; outline: 2px solid var(--accent); }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
 .card.ghost { border-color: var(--ghost); }
