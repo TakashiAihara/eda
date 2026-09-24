@@ -50,7 +50,8 @@ export class Client {
         authorization: `Bearer ${this.secret()}`,
         'content-type': 'application/json',
         'x-eda-session': this.session,
-        'x-eda-cwd': this.cwd,
+        // Header values must be ASCII; a cwd like ~/メモ would make every request throw.
+        'x-eda-cwd': encodeURIComponent(this.cwd),
         ...(t.attach ? { 'x-eda-attach': '1' } : {}),
       },
     });
@@ -240,9 +241,20 @@ export async function runMcp(): Promise<void> {
   const cursor = new Map<string, number>();
   // Per map: the rev last read, so an unchanged map costs one small request per pass.
   const revs = new Map<string, number>();
+  // Per map: the position last saved to the map by /api/ai/delivered.
+  const acked = new Map<string, number>();
+  const ack = async (t: Target): Promise<void> => {
+    const pos = cursor.get(t.dir);
+    if (pos === undefined || acked.get(t.dir) === pos) return;
+    await client.call(t, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: `c${pos}` }) });
+    acked.set(t.dir, pos);
+  };
   for (;;) {
     try {
       for (const t of await client.targets()) {
+        // A recorded position that failed to save is retried every pass until it sticks;
+        // otherwise a restart would replay what was already delivered.
+        await ack(t);
         const { rev } = (await client.call(t, '/api/rev')) as { rev: number };
         if (revs.get(t.dir) === rev) continue;
         const state = (await client.call(t, '/api/state')) as { doc: MapDoc };
@@ -252,8 +264,8 @@ export async function runMcp(): Promise<void> {
           // it, so this only covers a failed write (e.g. stdout closed), not a drop inside
           // the session.
           cursor.set(t.dir, Number(c.id.slice(1)));
-          await client.call(t, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: c.id }) });
         }
+        await ack(t);
         // The rev read before this pass, even though recording a delivery bumps it: reading
         // it again could swallow a message that arrived in between. Costs one extra fetch.
         revs.set(t.dir, rev);

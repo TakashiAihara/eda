@@ -39,7 +39,7 @@ export function saveMap(dir: string, doc: MapDoc): void {
   doc.mdHash = next;
   // eda.json first: if the process dies in between, map.md is either a person's edit (the
   // next check offers it again; waiting candidates are not duplicated) or eda's previous
-  // export, which `syncMarkdown` recognises by `prevMdHash` and simply rewrites.
+  // export, which the first `syncMarkdown` after a restart recognises by `prevMdHash`.
   writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(doc, null, 2)}\n`);
   writeAtomic(join(dir, MD_FILE), md);
 }
@@ -66,12 +66,17 @@ export function openMap(dir: string, title?: string): MapDoc {
  * Putting it back is what makes the candidates the only way in: a map.md left as the
  * editor saved it would look adopted to whoever opens it next.
  */
-export function syncMarkdown(dir: string, doc: MapDoc): boolean {
+/**
+ * `recovering`: only on the first check after the server starts may map.md matching the
+ * previous export be read as a save cut short. Later, the same content is a person
+ * undoing a change, and is offered like any other edit.
+ */
+export function syncMarkdown(dir: string, doc: MapDoc, recovering = false): boolean {
   const p = join(dir, MD_FILE);
   const md = existsSync(p) ? readFileSync(p, 'utf8') : '';
   const h = sha(md);
   if (h === doc.mdHash) return false;
-  if (md !== '' && h !== doc.prevMdHash) addCandidates(doc, diffOutline(doc, parseMarkdown(md)));
+  if (md !== '' && !(recovering && h === doc.prevMdHash)) addCandidates(doc, diffOutline(doc, parseMarkdown(md)));
   saveMap(dir, doc);
   return true;
 }

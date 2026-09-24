@@ -49,7 +49,7 @@ export function startServer(opts: ServeOptions) {
     saveMap(opts.dir, doc);
     rev += 1;
   };
-  syncMarkdown(opts.dir, doc);
+  syncMarkdown(opts.dir, doc, true);
   remember(opts.session ?? null, opts.cwd ?? null);
 
   // Bodies are read before the map.md check, so no edit can land between the check and
@@ -79,7 +79,7 @@ export function startServer(opts: ServeOptions) {
         // From here to the save nothing awaits the network, so the map.md seen now is the
         // one the change is applied against.
         if (syncMarkdown(opts.dir, doc)) rev += 1;
-        if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), req.headers.get('x-eda-cwd'));
+        if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), decodeURIComponent(req.headers.get('x-eda-cwd') ?? ''));
         const result = await h(req, doc, req.params ?? {});
         if (write) {
           saveMap(opts.dir, doc);

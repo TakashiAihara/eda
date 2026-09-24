@@ -215,7 +215,7 @@ test('a map.md left over from a save cut short is rewritten, not offered as an e
   saveMap(d4, doc);
   // the crash: eda.json was written, map.md still the previous export
   writeFileSync(join(d4, 'map.md'), oldMd);
-  syncMarkdown(d4, doc);
+  syncMarkdown(d4, doc, true);
   expect(doc.suggestions).toEqual([]);
   expect(readFileSync(join(d4, 'map.md'), 'utf8')).toBe('# c\n\n');
 });
@@ -263,6 +263,25 @@ test('eda mcp pushes the person\'s chat into the session as a channel event', as
     unregister();
   }
 }, 15000);
+
+test('restoring the previous map.md by hand while running is offered as an edit', async () => {
+  const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
+  const { addChild, editNode } = await import('../src/map.ts');
+  const d5 = mkdtempSync(join(tmpdir(), 'eda-undo-'));
+  const doc = openMap(d5, 'u');
+  const n = addChild(doc, 'n1', 'A');
+  saveMap(d5, doc);
+  editNode(doc, n.id, { text: 'B' });
+  saveMap(d5, doc);
+  writeFileSync(join(d5, 'map.md'), '# u\n\n- A\n');
+  syncMarkdown(d5, doc);
+  expect(doc.suggestions.map((s) => [s.kind, s.text])).toEqual([['edit', 'A']]);
+});
+
+test('a session whose cwd is not ASCII can reach its map', async () => {
+  const jp = new Client('S1', '/tmp/日本語', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
+  expect(await runTool(jp, 'read_map', {})).toContain('[n1]');
+});
 
 test('a session with no map is told how to start one', async () => {
   const lost = new Client('S9', '/w', () => []);
