@@ -180,7 +180,7 @@ function renderChat(s: State): void {
   const list = h('div', { class: 'msgs', id: 'msgs' },
     ...s.doc.chat.map((c) =>
       h('div', { class: `msg ${c.from}` },
-        h('div', { class: 'who' }, `${c.from === 'ai' ? 'AI' : 'あなた'}${c.nodeId ? ` — ${find(s.doc.root, c.nodeId)?.node.text ?? c.nodeId}` : ''}`),
+        h('div', { class: 'who' }, `${c.from === 'ai' ? 'AI' : c.from === 'system' ? 'eda' : 'あなた'}${c.nodeId ? ` — ${find(s.doc.root, c.nodeId)?.node.text ?? c.nodeId}` : ''}`),
         c.text),
     ),
   );

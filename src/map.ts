@@ -49,7 +49,11 @@ export type Suggestion =
 
 export type NewSuggestion = Suggestion extends infer S ? (S extends Suggestion ? Omit<S, 'id' | 'at'> : never) : never;
 
-export type Chat = { id: string; at: string; from: 'human' | 'ai'; nodeId?: string; text: string; session?: string };
+/**
+ * `system`: eda telling the session that suggested something what the person did with it.
+ * `session` on a system line is the recipient; on an ai line it is the author.
+ */
+export type Chat = { id: string; at: string; from: 'human' | 'ai' | 'system'; nodeId?: string; text: string; session?: string };
 
 /** `delivered`: the last chat id the session's channel pushed, so a restart resumes there. */
 export type SessionRef = { id: string; cwd: string; at: string; delivered?: number };
@@ -290,7 +294,15 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
   }
   for (const u of urls) addUrl(doc, n.id, u, origin);
   if (s.kind === 'add') for (const c of s.children ?? []) addOutline(doc, n, c);
+  const rewritten = text !== undefined && text !== s.text ? ` (直して採用: 「${text}」)` : '';
+  decided(doc, s, `採用: 「${s.text ?? s.urls.join(' ')}」${rewritten} → ${n.id}`, n.id);
   return n;
+}
+
+/** Tell the session that made an AI suggestion what happened to it, through the chat its channel reads. */
+function decided(doc: MapDoc, s: Suggestion, text: string, nodeId: string): void {
+  if (s.source.by !== 'ai' || s.source.session === undefined) return;
+  doc.chat.push({ id: nextId(doc, 'c'), at: new Date().toISOString(), from: 'system', nodeId, text: `${s.id} ${text}`, session: s.source.session });
 }
 
 /** A hand-written subtree from map.md, adopted with its parent. */
@@ -300,7 +312,8 @@ function addOutline(doc: MapDoc, parent: Node, o: Outline): void {
 }
 
 export function reject(doc: MapDoc, id: string): void {
-  takeSuggestion(doc, id);
+  const s = takeSuggestion(doc, id);
+  decided(doc, s, `却下: 「${s.text ?? s.urls.join(' ')}」`, s.kind === 'add' ? s.parentId : s.nodeId);
 }
 
 export function say(doc: MapDoc, from: 'human' | 'ai', text: string, nodeId?: string, session?: string): Chat {

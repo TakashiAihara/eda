@@ -71,7 +71,8 @@ test('chat from the person is visible to Claude, and Claude replies without touc
   await person('POST', '/api/chat', { text: 'what about budget?', nodeId: 'n1' });
   expect(await runTool(claude, 'reply', { text: 'set a ceiling first' })).toBe('posted');
   const doc = (await person('GET', '/api/state')).json.doc;
-  expect(doc.chat.map((c: any) => [c.from, c.text])).toEqual([
+  // The system lines before these are the decisions on the earlier suggestions.
+  expect(doc.chat.filter((c: any) => c.from !== 'system').map((c: any) => [c.from, c.text])).toEqual([
     ['human', 'what about budget?'],
     ['ai', 'set a ceiling first'],
   ]);
@@ -109,7 +110,11 @@ test('the channel resumes after what was delivered, or from when the session joi
     ],
   };
   expect(undelivered(doc, 'A').map((c) => c.id)).toEqual(['c2', 'c4']);
-  expect(undelivered(doc, 'B').map((c) => c.id)).toEqual(['c4']);
+  // a decision on B's suggestion goes to B only
+  doc.chat.push({ id: 'c5', at: '2026-01-04', from: 'system', session: 'B', text: 's1 採用' });
+  expect(undelivered(doc, 'A', 4).map((c) => c.id)).toEqual([]);
+  expect(undelivered(doc, 'B', 4).map((c) => c.id)).toEqual(['c5']);
+  expect(undelivered(doc, 'B').map((c) => c.id)).toEqual(['c4', 'c5']);
   expect(undelivered(doc, 'A', 2).map((c) => c.id)).toEqual(['c4']);
 });
 
@@ -153,7 +158,7 @@ test('a channel event carries the message and the node it is about', () => {
   const doc: any = { root: { id: 'n1', text: 'trip', children: [{ id: 'n2', text: 'hotel', children: [] }] } };
   const e = describeChat('/m', { id: 'c7', at: '', from: 'human', nodeId: 'n2', text: 'cheaper?' }, doc);
   expect(e.content).toBe('cheaper?\n\nAbout node n2: hotel');
-  expect(e.meta).toEqual({ map: '/m', chat_id: 'c7', node_id: 'n2' });
+  expect(e.meta).toEqual({ map: '/m', chat_id: 'c7', kind: 'message', node_id: 'n2' });
 });
 
 test('a directory with only a map.md keeps it: its lines come back as candidates', async () => {
@@ -267,11 +272,14 @@ test('eda mcp pushes the person\'s chat into the session as a channel event', as
     expect((await c.listTools()).tools.map((t) => t.name)).toEqual(['read_map', 'suggest_node', 'suggest_edit', 'reply']);
     await Bun.sleep(2500);
     await person('POST', '/api/chat', { text: 'over the channel', nodeId: 'n1' });
-    for (let i = 0; i < 40 && !got.length; i++) await Bun.sleep(100);
-    expect(got[0]?.method).toBe('notifications/claude/channel');
-    expect(got[0]?.params.content).toBe('over the channel\n\nAbout node n1: trip');
+    // Earlier tests adopted S1's suggestions, so decision events may come first.
+    const msg = () => got.find((g) => g.params?.meta?.kind === 'message');
+    for (let i = 0; i < 40 && !msg(); i++) await Bun.sleep(100);
+    expect(got.every((g) => g.method === 'notifications/claude/channel')).toBe(true);
+    expect(msg()?.params.content).toBe('over the channel\n\nAbout node n1: trip');
+    expect(got.some((g) => g.params.meta.kind === 'decision' && g.params.content.includes('採用'))).toBe(true);
     // The position is recorded right after the notification is written; give it a moment.
-    const want = Number(got[0].params.meta.chat_id.slice(1));
+    const want = Math.max(...got.map((g) => Number(g.params.meta.chat_id.slice(1))));
     const delivered = () => JSON.parse(readFileSync(join(dir, 'eda.json'), 'utf8')).sessions.find((s: any) => s.id === 'S1').delivered;
     for (let i = 0; i < 20 && delivered() !== want; i++) await Bun.sleep(100);
     expect(delivered()).toBe(want);

@@ -200,7 +200,8 @@ export function describe(dir: string, c: Chat, doc: MapDoc): { content: string; 
   const on = c.nodeId === undefined ? undefined : find(doc.root, c.nodeId);
   return {
     content: [c.text, ...(on === undefined ? [] : ['', `About node ${c.nodeId}: ${on}`])].join('\n'),
-    meta: { map: dir, chat_id: c.id, ...(c.nodeId === undefined ? {} : { node_id: c.nodeId }) },
+    // `kind` lets the session tell the person's words from eda's note about its suggestion.
+    meta: { map: dir, chat_id: c.id, kind: c.from === 'system' ? 'decision' : 'message', ...(c.nodeId === undefined ? {} : { node_id: c.nodeId }) },
   };
 }
 
@@ -216,7 +217,7 @@ export async function runMcp(): Promise<void> {
         'To start a map, run `eda serve <dir> --title "<theme>"` in the background and give the person the url it prints. It records this session, so read_map and the chat work from then on.',
         'Do not edit map.md or eda.json yourself: map.md edits only come back as candidates for the person, and eda.json is overwritten by the server.',
         'Messages the person types in the map arrive as <channel source="eda" map="..." node_id="...">. Answer them with the reply tool, and when a node would help, offer exactly one with suggest_node.',
-        'Wait for the person to adopt or reject a suggestion before suggesting again. Never try to build out the map.',
+        'Wait for the person to adopt or reject a suggestion before suggesting again; the outcome arrives as a channel event with kind="decision". Never try to build out the map.',
       ].join(' '),
     },
   );
@@ -292,6 +293,8 @@ const num = (c: Chat): number => Number(c.id.slice(1));
 export function undelivered(doc: MapDoc, session: string, after?: number): Chat[] {
   const ref = doc.sessions.find((s) => s.id === session);
   const from = after ?? ref?.delivered;
-  if (from !== undefined) return doc.chat.filter((c) => c.from === 'human' && num(c) > from);
-  return doc.chat.filter((c) => c.from === 'human' && c.at >= (ref?.at ?? ''));
+  // The person's messages, and eda's notes about this session's own suggestions.
+  const mine = (c: Chat): boolean => c.from === 'human' || (c.from === 'system' && c.session === session);
+  if (from !== undefined) return doc.chat.filter((c) => mine(c) && num(c) > from);
+  return doc.chat.filter((c) => mine(c) && c.at >= (ref?.at ?? ''));
 }

@@ -199,3 +199,15 @@ test('processes racing for one map directory: exactly one wins', async () => {
   expect(out.filter((o) => o === 'won')).toHaveLength(1);
   expect(out.filter((o) => o === 'lost')).toHaveLength(7);
 });
+
+test('adopting or rejecting an AI suggestion leaves a note for the session that made it', () => {
+  const d = newMap('p');
+  const a = suggest(d, { kind: 'add', parentId: 'n1', text: 'x', reason: '' }, ai);
+  const n = accept(d, a.id, { text: 'y' });
+  const b = suggest(d, { kind: 'add', parentId: 'n1', text: 'z', reason: '' }, ai);
+  reject(d, b.id);
+  expect(d.chat.map((c) => [c.from, c.session, c.text])).toEqual([
+    ['system', 'S1', `${a.id} 採用: 「x」 (直して採用: 「y」) → ${n.id}`],
+    ['system', 'S1', `${b.id} 却下: 「z」`],
+  ]);
+});
