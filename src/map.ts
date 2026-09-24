@@ -303,7 +303,7 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
     s.kind === 'add' || text !== undefined ? `本文「${n.text}」` : '本文は変えず',
     ...(urls.length ? [`URL ${urls.join(' ')}`] : []),
   ];
-  const changed = (text !== undefined && text !== s.text) || (s.kind === 'edit' && text === undefined && s.text !== undefined) || urls.join() !== s.urls.join();
+  const changed = (text !== undefined && text !== s.text) || (s.kind === 'edit' && text === undefined && s.text !== undefined) || JSON.stringify(urls) !== JSON.stringify(s.urls);
   decided(doc, s, `${changed ? '直して採用' : '採用'}: ${parts.join(' / ')} → ${n.id}`, n.id);
   return n;
 }
