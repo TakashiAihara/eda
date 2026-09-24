@@ -35,8 +35,10 @@ export function loadMap(dir: string): MapDoc | undefined {
 export function saveMap(dir: string, doc: MapDoc): void {
   const md = toMarkdown(doc.root);
   doc.mdHash = sha(md);
-  writeAtomic(join(dir, MD_FILE), md);
+  // eda.json first: if the process dies in between, map.md still holds the person's edit
+  // and the next check offers it again (already-waiting candidates are not duplicated).
   writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(doc, null, 2)}\n`);
+  writeAtomic(join(dir, MD_FILE), md);
 }
 
 export function openMap(dir: string, title?: string): MapDoc {
@@ -154,7 +156,9 @@ export function readInstances(): Instance[] {
  */
 export function lockMap(dir: string): (() => void) | number {
   const p = join(dir, 'eda.lock');
-  for (let i = 0; i < 3; i++) {
+  // Bounded wait rather than three quick tries: a racer holding `.take` may simply be slow.
+  for (let i = 0; i < 100; i++) {
+    if (i > 0) Bun.sleepSync(20);
     if (publish(p, String(process.pid))) {
       return () => {
         try {
@@ -183,8 +187,8 @@ export function lockMap(dir: string): (() => void) | number {
         unlinkSync(take);
       }
     }
-    // ponytail: a process killed while holding `.take` leaves it behind and blocks takeover;
-    // remove eda.lock.take by hand if a map refuses to start with its owner dead.
+    // ponytail: a process killed while holding `.take` leaves it behind, and takeover then
+    // fails after the wait; remove eda.lock.take by hand if a map refuses to start.
   }
   throw new Error(`could not take ${p}`);
 }

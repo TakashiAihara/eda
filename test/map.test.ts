@@ -70,9 +70,9 @@ test('an edit suggestion changes text and attaches urls on adoption only', () =>
 test('an adoption that fails changes nothing', () => {
   const d = newMap('plan');
   const s = suggest(d, { kind: 'add', parentId: 'n1', text: 'x', reason: '' }, ai);
+  const before = JSON.stringify(d);
   expect(() => accept(d, s.id, { urls: ['not a url'] })).toThrow(/http/);
-  expect(d.root.children).toHaveLength(0);
-  expect(d.suggestions.map((x) => x.id)).toEqual([s.id]);
+  expect(JSON.stringify(d)).toBe(before);
 });
 
 test('a URL is removed by the form it was given in', () => {

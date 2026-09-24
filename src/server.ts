@@ -52,7 +52,11 @@ export function startServer(opts: ServeOptions) {
   syncMarkdown(opts.dir, doc);
   remember(opts.session ?? null, opts.cwd ?? null);
 
-  const body = async (req: Request): Promise<Record<string, unknown>> => {
+  // Bodies are read before the map.md check, so no edit can land between the check and
+  // the change (see `api`). Handlers get the same object back.
+  const bodies = new WeakMap<Request, Record<string, unknown>>();
+  const body = async (req: Request): Promise<Record<string, unknown>> => bodies.get(req) ?? readBody(req);
+  const readBody = async (req: Request): Promise<Record<string, unknown>> => {
     try {
       const v: unknown = await req.json();
       // null, arrays and scalars are valid JSON but not a body; treat them as empty so
@@ -71,12 +75,13 @@ export function startServer(opts: ServeOptions) {
     async (req: Request & { params?: Record<string, string> }): Promise<Response> => {
       if (req.headers.get('authorization') !== `Bearer ${secret}`) return Response.json({ error: 'unauthorized' }, { status: 401 });
       try {
+        if (write) bodies.set(req, await readBody(req));
+        // From here to the save nothing awaits the network, so the map.md seen now is the
+        // one the change is applied against.
         if (syncMarkdown(opts.dir, doc)) rev += 1;
         if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), req.headers.get('x-eda-cwd'));
         const result = await h(req, doc, req.params ?? {});
         if (write) {
-          // Again: an editor may have saved map.md while the handler awaited the body.
-          syncMarkdown(opts.dir, doc);
           saveMap(opts.dir, doc);
           rev += 1;
         }

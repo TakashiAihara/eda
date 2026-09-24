@@ -204,9 +204,11 @@ function renderChat(s: State): void {
 }
 
 /** Sections the person is typing in are left alone; they are redrawn on the next change after. */
-function render(s: State): void {
-  renderHead(s);
-  renderMap(s);
+function render(s: State, withMap = true): void {
+  if (withMap) {
+    renderHead(s);
+    renderMap(s);
+  }
   const busy = document.activeElement?.closest('aside section')?.id;
   if (busy !== 'node') renderNode(s);
   if (busy !== 'candidates') renderCandidates(s);
@@ -233,5 +235,7 @@ else {
   await refresh(true);
   setInterval(() => refresh().catch(() => {}), 1500);
   // A section skipped while it had focus is drawn once focus leaves it.
-  document.addEventListener('focusout', () => setTimeout(() => state && render(state)));
+  // Only the sidebar: rebuilding the map here would detach a node button between the
+  // mousedown that moved focus and the click.
+  document.addEventListener('focusout', () => setTimeout(() => state && render(state, false)));
 }

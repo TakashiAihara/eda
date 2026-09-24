@@ -162,13 +162,44 @@ test('a directory with only a map.md keeps it: its lines come back as candidates
   const s2 = startServer({ dir: d2, host: '127.0.0.1', port: 0 });
   try {
     const doc = s2.doc;
-    expect(doc.suggestions.map((s) => [s.kind, s.text])).toEqual([
-      ['edit', 'ideas'],
-      ['add', 'one'],
-      ['add', 'two'],
+    expect(doc.suggestions.map((s) => [s.kind, s.text, s.kind === 'add' ? s.children?.map((c) => c.text) : undefined])).toEqual([
+      ['edit', 'ideas', undefined],
+      ['add', 'one', ['one.a']],
+      ['add', 'two', undefined],
     ]);
   } finally {
     s2.server.stop(true);
+  }
+});
+
+test('a map.md edit saved while a request body is still arriving is read as an addition', async () => {
+  const d3 = mkdtempSync(join(tmpdir(), 'eda-slow-'));
+  const s3 = startServer({ dir: d3, host: '127.0.0.1', port: 0, title: 'r' });
+  try {
+    let push!: (s: string) => void;
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        push = (s) => {
+          c.enqueue(new TextEncoder().encode(s));
+          c.close();
+        };
+      },
+    });
+    const pending = fetch(`http://127.0.0.1:${s3.server.port}/api/nodes`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
+      body: stream,
+      duplex: 'half',
+    } as RequestInit);
+    await Bun.sleep(100);
+    writeFileSync(join(d3, 'map.md'), '# r\n\n- editor child\n');
+    push(JSON.stringify({ parentId: 'n1', text: 'browser child' }));
+    expect((await pending).status).toBe(200);
+    const doc = s3.doc;
+    expect(doc.root.children.map((c) => c.text)).toEqual(['browser child']);
+    expect(doc.suggestions.map((s) => [s.kind, s.text])).toEqual([['add', 'editor child']]);
+  } finally {
+    s3.server.stop(true);
   }
 });
 
