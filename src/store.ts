@@ -37,12 +37,17 @@ export function saveMap(dir: string, doc: MapDoc): void {
   const next = sha(md);
   if (next !== doc.mdHash) doc.prevMdHash = doc.mdHash;
   doc.mdHash = next;
-  // eda.json first: if the process dies in between, map.md is either a person's edit (the
-  // next check offers it again; waiting candidates are not duplicated) or eda's previous
-  // export, which the first `syncMarkdown` after a restart recognises by `prevMdHash`.
+  // eda.json first, bracketed by a marker: if the process dies in between, the marker is
+  // what tells the next start that a map.md equal to the previous export is a save cut
+  // short, not a person's undo made while eda was stopped.
+  const marker = join(dir, EXPORTING);
+  writeFileSync(marker, '');
   writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(doc, null, 2)}\n`);
   writeAtomic(join(dir, MD_FILE), md);
+  unlinkSync(marker);
 }
+
+const EXPORTING = '.eda-exporting';
 
 export function openMap(dir: string, title?: string): MapDoc {
   mkdirSync(dir, { recursive: true });
@@ -76,7 +81,8 @@ export function syncMarkdown(dir: string, doc: MapDoc, recovering = false): bool
   const md = existsSync(p) ? readFileSync(p, 'utf8') : '';
   const h = sha(md);
   if (h === doc.mdHash) return false;
-  if (md !== '' && !(recovering && h === doc.prevMdHash)) addCandidates(doc, diffOutline(doc, parseMarkdown(md)));
+  const cutShort = recovering && h === doc.prevMdHash && existsSync(join(dir, EXPORTING));
+  if (md !== '' && !cutShort) addCandidates(doc, diffOutline(doc, parseMarkdown(md)));
   saveMap(dir, doc);
   return true;
 }

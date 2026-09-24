@@ -252,23 +252,28 @@ export async function runMcp(): Promise<void> {
   for (;;) {
     try {
       for (const t of await client.targets()) {
-        // A recorded position that failed to save is retried every pass until it sticks;
-        // otherwise a restart would replay what was already delivered.
-        await ack(t);
-        const { rev } = (await client.call(t, '/api/rev')) as { rev: number };
-        if (revs.get(t.dir) === rev) continue;
-        const state = (await client.call(t, '/api/state')) as { doc: MapDoc };
-        for (const c of undelivered(state.doc, session, cursor.get(t.dir))) {
-          await mcp.notification({ method: 'notifications/claude/channel', params: describe(t.dir, c, state.doc) });
-          // Advanced once the notification is written. Claude Code does not acknowledge
-          // it, so this only covers a failed write (e.g. stdout closed), not a drop inside
-          // the session.
-          cursor.set(t.dir, Number(c.id.slice(1)));
+        try {
+          // A recorded position that failed to save is retried every pass until it sticks;
+          // otherwise a restart would replay what was already delivered.
+          await ack(t);
+          const { rev } = (await client.call(t, '/api/rev')) as { rev: number };
+          if (revs.get(t.dir) === rev) continue;
+          const state = (await client.call(t, '/api/state')) as { doc: MapDoc };
+          for (const c of undelivered(state.doc, session, cursor.get(t.dir))) {
+            await mcp.notification({ method: 'notifications/claude/channel', params: describe(t.dir, c, state.doc) });
+            // Advanced once the notification is written. Claude Code does not acknowledge
+            // it, so this only covers a failed write (e.g. stdout closed), not a drop inside
+            // the session.
+            cursor.set(t.dir, Number(c.id.slice(1)));
+          }
+          await ack(t);
+          // The rev read before this pass, even though recording a delivery bumps it: reading
+          // it again could swallow a message that arrived in between. Costs one extra fetch.
+          revs.set(t.dir, rev);
+        } catch (err) {
+          // Per map, so one map that keeps failing does not silence the others.
+          console.error(`eda: channel pass failed for ${t.dir}: ${err instanceof Error ? err.message : String(err)}`);
         }
-        await ack(t);
-        // The rev read before this pass, even though recording a delivery bumps it: reading
-        // it again could swallow a message that arrived in between. Costs one extra fetch.
-        revs.set(t.dir, rev);
       }
     } catch (err) {
       console.error(`eda: channel pass failed: ${err instanceof Error ? err.message : String(err)}`);

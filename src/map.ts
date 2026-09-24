@@ -145,7 +145,12 @@ export type NodePatch = { text?: string; note?: string; collapsed?: boolean };
 
 export function editNode(doc: MapDoc, id: string, patch: NodePatch): Node {
   const n = must(doc, id).node;
-  if (patch.text !== undefined) n.text = oneLine(patch.text);
+  if (patch.text !== undefined) {
+    const text = oneLine(patch.text);
+    // The current text is now the person's, whoever wrote the node or last changed it.
+    if (text !== n.text && (n.origin.by !== 'human' || n.editedBy)) n.editedBy = { by: 'human' };
+    n.text = text;
+  }
   if (patch.note !== undefined) {
     if (patch.note.trim() === '') delete n.note;
     else n.note = patch.note;

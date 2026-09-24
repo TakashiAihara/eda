@@ -5,6 +5,7 @@ import {
   addCandidates,
   addUrl,
   diffOutline,
+  editNode,
   find,
   kaneoTaskUrl,
   newMap,
@@ -65,6 +66,8 @@ test('an edit suggestion changes text and attaches urls on adoption only', () =>
   expect(n.text).toBe('new');
   expect(n.origin.by).toBe('human');
   expect(n.editedBy).toEqual(ai);
+  editNode(d, n.id, { text: 'mine again' });
+  expect(n.editedBy).toEqual({ by: 'human' });
 });
 
 test('an adoption that fails changes nothing', () => {

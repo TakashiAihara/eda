@@ -187,6 +187,7 @@ function renderChat(s: State): void {
         const k = e as KeyboardEvent;
         const el = e.target as HTMLTextAreaElement;
         if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) {
+          e.preventDefault();
           const sent = el.value;
           act('POST', '/api/chat', { text: sent, nodeId: selected }).then(() => {
             // Only if nothing was typed while it was sending.

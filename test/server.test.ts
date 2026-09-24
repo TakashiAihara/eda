@@ -9,7 +9,7 @@ process.env['EDA_HOME'] = home;
 process.env['XDG_CONFIG_HOME'] = home;
 const { startServer } = await import('../src/server.ts');
 const { Client, describe: describeChat, runTool, undelivered } = await import('../src/mcp.ts');
-const { token } = await import('../src/store.ts');
+const { loadMap, token } = await import('../src/store.ts');
 
 const dir = mkdtempSync(join(tmpdir(), 'eda-map-'));
 const { server } = startServer({ dir, host: '127.0.0.1', port: 0, title: 'trip', session: 'S1', cwd: '/w' });
@@ -213,11 +213,28 @@ test('a map.md left over from a save cut short is rewritten, not offered as an e
   const oldMd = readFileSync(join(d4, 'map.md'), 'utf8');
   removeNode(doc, n.id);
   saveMap(d4, doc);
-  // the crash: eda.json was written, map.md still the previous export
+  // the crash: eda.json was written, map.md still the previous export, marker left behind
   writeFileSync(join(d4, 'map.md'), oldMd);
-  syncMarkdown(d4, doc, true);
-  expect(doc.suggestions).toEqual([]);
+  writeFileSync(join(d4, '.eda-exporting'), '');
+  const reloaded = loadMap(d4)!;
+  syncMarkdown(d4, reloaded, true);
+  expect(reloaded.suggestions).toEqual([]);
   expect(readFileSync(join(d4, 'map.md'), 'utf8')).toBe('# c\n\n');
+});
+
+test('restoring the previous map.md while eda was stopped is offered as an edit on start', async () => {
+  const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
+  const { addChild, editNode } = await import('../src/map.ts');
+  const d6 = mkdtempSync(join(tmpdir(), 'eda-offline-'));
+  const doc = openMap(d6, 'o');
+  const n = addChild(doc, 'n1', 'A');
+  saveMap(d6, doc);
+  editNode(doc, n.id, { text: 'B' });
+  saveMap(d6, doc);
+  writeFileSync(join(d6, 'map.md'), '# o\n\n- A\n');
+  const reloaded = loadMap(d6)!;
+  syncMarkdown(d6, reloaded, true);
+  expect(reloaded.suggestions.map((s) => [s.kind, s.text])).toEqual([['edit', 'A']]);
 });
 
 test('registry records are only contacted on this host, on a numeric port', async () => {
@@ -279,8 +296,10 @@ test('restoring the previous map.md by hand while running is offered as an edit'
 });
 
 test('a session whose cwd is not ASCII can reach its map', async () => {
-  const jp = new Client('S1', '/tmp/日本語', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
-  expect(await runTool(jp, 'read_map', {})).toContain('[n1]');
+  const jp = new Client('S7', '/tmp/日本語', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
+  expect(await runTool(jp, 'read_map', { map: dir })).toContain('[n1]');
+  const s7 = (await person('GET', '/api/state')).json.doc.sessions.find((s: any) => s.id === 'S7');
+  expect(s7.cwd).toBe('/tmp/日本語');
 });
 
 test('a session with no map is told how to start one', async () => {
