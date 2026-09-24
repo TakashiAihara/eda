@@ -125,6 +125,25 @@ test('markdown round-trips and a hand edit becomes candidates, not changes', () 
   expect(d.suggestions.filter((s) => s.text === 'a2')).toHaveLength(1);
 });
 
+test('two new lines with the same text but different children are two candidates', () => {
+  const d = newMap('p');
+  addCandidates(d, diffOutline(d, parseMarkdown('# p\n\n- same\n  - x\n')));
+  addCandidates(d, diffOutline(d, parseMarkdown('# p\n\n- same\n  - x\n- other\n')));
+  addCandidates(d, diffOutline(d, parseMarkdown('# p\n\n- same\n  - y\n')));
+  expect(d.suggestions.map((s) => [s.text, s.kind === 'add' ? s.children?.map((c) => c.text) : null])).toEqual([
+    ['same', ['x']],
+    ['other', undefined],
+    ['same', ['y']],
+  ]);
+});
+
+test('an add adopted with an emptied text is refused', () => {
+  const d = newMap('p');
+  const s = suggest(d, { kind: 'add', parentId: 'n1', text: 'x', reason: '' }, ai);
+  expect(() => accept(d, s.id, { text: '' })).toThrow(/empty/);
+  expect(d.suggestions).toHaveLength(1);
+});
+
 test('kaneo task URLs are parsed into ids', () => {
   expect(parseKaneoUrl('https://k.example/dashboard/workspace/W/project/P/task/T?x=1')).toEqual({ workspace: 'W', project: 'P', task: 'T' });
   expect(() => parseKaneoUrl('https://k.example/')).toThrow(/kaneo/);

@@ -72,6 +72,8 @@ export function startServer(opts: ServeOptions) {
         if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), req.headers.get('x-eda-cwd'));
         const result = await h(req, doc, req.params ?? {});
         if (write) {
+          // Again: an editor may have saved map.md while the handler awaited the body.
+          syncMarkdown(opts.dir, doc);
           saveMap(opts.dir, doc);
           rev += 1;
         }

@@ -265,7 +265,6 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
   const raw = override?.text === null ? undefined : (override?.text ?? s.text);
   const text = raw === undefined ? undefined : oneLine(raw);
   const target = must(doc, s.kind === 'add' ? s.parentId : s.nodeId).node;
-  if (s.kind === 'add' && text === undefined) throw new MapError('text is empty');
 
   takeSuggestion(doc, id);
   const origin: Origin = s.source.by === 'ai' ? s.source : { by: 'md-edit' };
@@ -384,7 +383,8 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
 export function addCandidates(doc: MapDoc, found: NewSuggestion[]): void {
   const at = new Date().toISOString();
   for (const f of found) {
-    const key = (s: NewSuggestion): string => `${s.kind}:${s.kind === 'add' ? s.parentId : s.nodeId}:${s.text ?? ''}`;
+    const key = (s: NewSuggestion): string =>
+      JSON.stringify([s.kind, s.kind === 'add' ? s.parentId : s.nodeId, s.text ?? '', s.kind === 'add' ? (s.children ?? []) : []]);
     const dup = doc.suggestions.some((s) => s.source.by === 'md-edit' && key(s) === key(f));
     if (!dup) doc.suggestions.push({ ...f, id: nextId(doc, 's'), at } as Suggestion);
   }

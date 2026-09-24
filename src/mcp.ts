@@ -245,6 +245,11 @@ const num = (c: Chat): number => Number(c.id.slice(1));
  * session was resumed), that is what came after this session last answered, or since it
  * joined the map if it never has: older messages are history, the rest still wait for it.
  */
+/**
+ * ponytail: a message that arrived between the one being answered and the reply is
+ * treated as answered after a restart. Persist a delivered-up-to id per session on the
+ * map if that loses messages in practice.
+ */
 export function undelivered(doc: MapDoc, session: string, after?: number): Chat[] {
   const { chat } = doc;
   if (after !== undefined) return chat.filter((c) => c.from === 'human' && num(c) > after);
