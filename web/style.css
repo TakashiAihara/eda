@@ -51,7 +51,7 @@ a { color: var(--accent); word-break: break-all; }
 .tree ul > li:first-child::after { top: 50%; }
 .tree ul > li:last-child::after { bottom: 50%; }
 .tree ul > li:only-child::after { display: none; }
-.node { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+.node { font: inherit; color: inherit; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 .node.root { font-weight: 600; font-size: 15px; }
 .node.sel { outline: 2px solid var(--accent); }
 .node.ai { border-color: var(--ai); }

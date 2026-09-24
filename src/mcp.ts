@@ -9,6 +9,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { networkInterfaces } from 'node:os';
 import type { Chat, MapDoc } from './map.ts';
 import { type Instance, readInstances, token } from './store.ts';
 
@@ -17,7 +18,15 @@ const INTERVAL_MS = 2000;
 /** `attach`: this call names the map explicitly, so the server records the session on it. */
 type Target = { dir: string; base: string; attach?: boolean };
 
-const loopback = (host: string): string => (host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host);
+/**
+ * Where to reach a registered map. Only this host: the registry is a directory anyone
+ * sharing `EDA_HOME` could write, and a record pointing elsewhere would receive the token.
+ */
+function localBase(host: string, port: number): string | undefined {
+  if (host === '0.0.0.0' || host === '::' || host === 'localhost' || host.startsWith('127.')) return `http://127.0.0.1:${port}`;
+  const own = Object.values(networkInterfaces()).flatMap((l) => (l ?? []).map((a) => a.address));
+  return own.includes(host) ? `http://${host.includes(':') ? `[${host}]` : host}:${port}` : undefined;
+}
 
 export class Client {
   constructor(
@@ -52,7 +61,10 @@ export class Client {
    * else started — the server records the session from the request header.
    */
   async targets(dir?: string): Promise<Target[]> {
-    const running = this.instances().map((i) => ({ dir: i.dir, base: `http://${loopback(i.host)}:${i.port}` }));
+    const running = this.instances().flatMap((i) => {
+      const base = localBase(i.host, i.port);
+      return base === undefined ? [] : [{ dir: i.dir, base }];
+    });
     if (dir !== undefined) return running.filter((r) => r.dir === dir || r.dir.endsWith(`/${dir}`)).map((r) => ({ ...r, attach: true }));
     const mine: Target[] = [];
     for (const r of running) {
@@ -228,6 +240,7 @@ export async function runMcp(): Promise<void> {
           // it, so this only covers a failed write (e.g. stdout closed), not a drop inside
           // the session.
           cursor.set(t.dir, Number(c.id.slice(1)));
+          await client.call(t, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: c.id }) });
         }
         revs.set(t.dir, rev);
       }
@@ -241,21 +254,13 @@ export async function runMcp(): Promise<void> {
 const num = (c: Chat): number => Number(c.id.slice(1));
 
 /**
- * The person's messages to push. With no cursor yet (this process just started, or the
- * session was resumed), that is what came after this session last answered, or since it
- * joined the map if it never has: older messages are history, the rest still wait for it.
- */
-/**
- * ponytail: a message that arrived between the one being answered and the reply is
- * treated as answered after a restart. Persist a delivered-up-to id per session on the
- * map if that loses messages in practice.
+ * The person's messages to push: after the cursor of this process, or after what was
+ * recorded as delivered to this session (a restart or resume), or — for a session that
+ * was never sent anything — what was written since it joined the map.
  */
 export function undelivered(doc: MapDoc, session: string, after?: number): Chat[] {
-  const { chat } = doc;
-  if (after !== undefined) return chat.filter((c) => c.from === 'human' && num(c) > after);
-  const answered = chat.filter((c) => c.from === 'ai' && c.session === session);
-  if (answered.length) return chat.filter((c) => c.from === 'human' && num(c) > num(answered[answered.length - 1]!));
-  // Never answered here: what was written since the session joined the map.
-  const joined = doc.sessions.find((s) => s.id === session)?.at ?? '';
-  return chat.filter((c) => c.from === 'human' && c.at >= joined);
+  const ref = doc.sessions.find((s) => s.id === session);
+  const from = after ?? ref?.delivered;
+  if (from !== undefined) return doc.chat.filter((c) => c.from === 'human' && num(c) > from);
+  return doc.chat.filter((c) => c.from === 'human' && c.at >= (ref?.at ?? ''));
 }

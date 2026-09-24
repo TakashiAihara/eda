@@ -122,6 +122,33 @@ export function readInstances(): Instance[] {
   return out;
 }
 
+/**
+ * Claim a map directory for this process. Two servers on one directory would each
+ * overwrite the other's eda.json; `wx` makes the claim atomic, a dead owner's lock is taken over.
+ * Returns the release, or the pid that holds it.
+ */
+export function lockMap(dir: string): (() => void) | number {
+  const p = join(dir, 'eda.lock');
+  for (let i = 0; i < 2; i++) {
+    try {
+      writeFileSync(p, String(process.pid), { flag: 'wx' });
+      return () => {
+        try {
+          unlinkSync(p);
+        } catch {
+          /* already gone */
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      const owner = Number(readFileSync(p, 'utf8'));
+      if (owner && alive(owner)) return owner;
+      unlinkSync(p);
+    }
+  }
+  throw new Error(`could not take ${p}`);
+}
+
 export function registerInstance(i: Instance): () => void {
   mkdirSync(instancesDir(), { recursive: true });
   const p = join(instancesDir(), `${i.pid}.json`);

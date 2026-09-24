@@ -94,20 +94,39 @@ test('attaching a session does not overwrite a pending hand edit of map.md', asy
   expect(doc.suggestions.map((s: any) => s.text)).toContain('visa');
 });
 
-test('the channel sends what the session has not answered, or what came after it joined', () => {
+test('the channel resumes after what was delivered, or from when the session joined', () => {
   const doc: any = {
-    sessions: [{ id: 'A', cwd: '', at: '2026-01-02' }],
+    sessions: [
+      { id: 'A', cwd: '', at: '2026-01-02' },
+      { id: 'B', cwd: '', at: '2026-01-01', delivered: 2 },
+    ],
     chat: [
       { id: 'c1', at: '2026-01-01', from: 'human', text: 'before A joined' },
-      { id: 'c2', at: '2026-01-03', from: 'human', text: 'to A' },
-      { id: 'c3', at: '2026-01-03', from: 'ai', session: 'B', text: 'B answered' },
+      { id: 'c2', at: '2026-01-03', from: 'human', text: 'delivered to B' },
+      { id: 'c3', at: '2026-01-03', from: 'ai', session: 'B', text: 'B answered c2' },
+      { id: 'c4', at: '2026-01-03', from: 'human', text: 'arrived while B was restarting' },
     ],
   };
-  expect(undelivered(doc, 'A').map((c) => c.id)).toEqual(['c2']);
-  expect(undelivered(doc, 'B').map((c) => c.id)).toEqual([]);
-  doc.chat.push({ id: 'c4', at: '2026-01-04', from: 'human', text: 'new' });
+  expect(undelivered(doc, 'A').map((c) => c.id)).toEqual(['c2', 'c4']);
   expect(undelivered(doc, 'B').map((c) => c.id)).toEqual(['c4']);
   expect(undelivered(doc, 'A', 2).map((c) => c.id)).toEqual(['c4']);
+});
+
+test('the delivered position is stored per session on the map', async () => {
+  await person('POST', '/api/chat', { text: 'ping' });
+  const last = (await person('GET', '/api/state')).json.doc.chat.at(-1).id;
+  await claude.call({ dir, base }, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: last }) });
+  const s1 = (await person('GET', '/api/state')).json.doc.sessions.find((s: any) => s.id === 'S1');
+  expect(s1.delivered).toBe(Number(last.slice(1)));
+});
+
+test('a non-object JSON body is read as empty (no node named), not a 500', async () => {
+  const r = await fetch(`${base}/api/nodes`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
+    body: 'null',
+  });
+  expect(r.status).toBe(404);
 });
 
 test('an AI call without a session is refused', async () => {

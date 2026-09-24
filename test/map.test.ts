@@ -141,6 +141,7 @@ test('an add adopted with an emptied text is refused', () => {
   const d = newMap('p');
   const s = suggest(d, { kind: 'add', parentId: 'n1', text: 'x', reason: '' }, ai);
   expect(() => accept(d, s.id, { text: '' })).toThrow(/empty/);
+  expect(() => accept(d, s.id, { text: null })).toThrow(/empty/);
   expect(d.suggestions).toHaveLength(1);
 });
 
@@ -148,4 +149,17 @@ test('kaneo task URLs are parsed into ids', () => {
   expect(parseKaneoUrl('https://k.example/dashboard/workspace/W/project/P/task/T?x=1')).toEqual({ workspace: 'W', project: 'P', task: 'T' });
   expect(() => parseKaneoUrl('https://k.example/')).toThrow(/kaneo/);
   expect(kaneoTaskUrl('https://k.example/', { workspace: 'W', project: 'P', task: 'T' })).toBe('https://k.example/dashboard/workspace/W/project/P/task/T');
+});
+
+test('a map directory can be claimed by one live process at a time', async () => {
+  const { lockMap } = await import('../src/store.ts');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'eda-lock-'));
+  const release = lockMap(dir);
+  expect(typeof release).toBe('function');
+  expect(lockMap(dir)).toBe(process.pid);
+  (release as () => void)();
+  writeFileSync(join(dir, 'eda.lock'), '999999999');
+  expect(typeof lockMap(dir)).toBe('function');
 });

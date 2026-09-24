@@ -92,11 +92,11 @@ function renderMap(s: State): void {
     const cls = ['node', root ? 'root' : '', n.id === selected ? 'sel' : '', n.origin.by === 'ai' ? 'ai' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
       .filter(Boolean)
       .join(' ');
-    const box = h('div', { class: cls, title: originLabel(n.origin), click: () => select(n.id) }, n.text, tags ? h('span', { class: 'tags' }, tags) : null);
+    const box = h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) }, n.text, tags ? h('span', { class: 'tags' }, tags) : null);
     const li = h('li', {}, box);
     if (n.children.length) {
       li.append(
-        h('button', { class: 'fold', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) }, n.collapsed ? `+${n.children.length}` : '−'),
+        h('button', { class: 'fold', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) }, n.collapsed ? `+${n.children.length}` : '−'),
       );
     }
     const kids = n.collapsed ? [] : [...n.children.map((c) => item(c)), ...ghosts(n.id)];
@@ -123,7 +123,7 @@ function renderNode(s: State): void {
     h('h2', {}, 'URL'),
     ...n.urls.map((u) =>
       h('div', { class: 'row' }, h('a', { href: u.url, target: '_blank', rel: 'noopener' }, u.url), u.origin.by === 'ai' ? h('span', { class: 'small' }, 'AI') : null,
-        h('button', { click: () => act('DELETE', `${base}/urls`, { url: u.url }) }, '✕')),
+        h('button', { 'aria-label': `URL ${u.url} を外す`, click: () => act('DELETE', `${base}/urls`, { url: u.url }) }, '✕')),
     ),
     h('input', { placeholder: 'URL を添付 (Enter)', 'data-draft': `${n.id}:url`, keydown: onEnter((v, k) => act('POST', `${base}/urls`, { url: v }, k)) }),
     ...(s.kaneoHost === null
@@ -132,7 +132,7 @@ function renderNode(s: State): void {
           h('h2', {}, 'kaneo タスク'),
           ...n.tasks.map((t) =>
             h('div', { class: 'row' }, h('a', { href: kaneoTaskUrl(s.kaneoHost!, t), target: '_blank', rel: 'noopener' }, `${t.project} / ${t.task}`),
-              h('button', { click: () => act('DELETE', `${base}/tasks`, { task: t.task }) }, '✕')),
+              h('button', { 'aria-label': `タスク ${t.task} のリンクを外す`, click: () => act('DELETE', `${base}/tasks`, { task: t.task }) }, '✕')),
           ),
           h('input', { placeholder: 'kaneo のタスク URL を貼ってリンク (Enter)', 'data-draft': `${n.id}:task`, keydown: onEnter((v, k) => act('POST', `${base}/tasks`, { url: v }, k)) }),
         ]),
@@ -186,8 +186,10 @@ function renderChat(s: State): void {
         const k = e as KeyboardEvent;
         const el = e.target as HTMLTextAreaElement;
         if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) {
-          act('POST', '/api/chat', { text: el.value, nodeId: selected }).then(() => {
-            el.value = '';
+          const sent = el.value;
+          act('POST', '/api/chat', { text: sent, nodeId: selected }).then(() => {
+            // Only if nothing was typed while it was sending.
+            if (el.value === sent) el.value = '';
           });
         }
       },

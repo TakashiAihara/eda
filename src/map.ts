@@ -48,7 +48,8 @@ export type NewSuggestion = Suggestion extends infer S ? (S extends Suggestion ?
 
 export type Chat = { id: string; at: string; from: 'human' | 'ai'; nodeId?: string; text: string; session?: string };
 
-export type SessionRef = { id: string; cwd: string; at: string };
+/** `delivered`: the last chat id the session's channel pushed, so a restart resumes there. */
+export type SessionRef = { id: string; cwd: string; at: string; delivered?: number };
 
 export type MapDoc = {
   version: 1;
@@ -262,6 +263,7 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
   // Everything that can fail is checked before anything changes: a half-adopted
   // suggestion would leave a node in the map and the candidate gone.
   const urls = (override?.urls ?? s.urls).map(checkUrl);
+  if (override?.text === null && s.kind === 'add') throw new MapError('text is empty');
   const raw = override?.text === null ? undefined : (override?.text ?? s.text);
   const text = raw === undefined ? undefined : oneLine(raw);
   const target = must(doc, s.kind === 'add' ? s.parentId : s.nodeId).node;

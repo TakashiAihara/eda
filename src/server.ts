@@ -54,7 +54,10 @@ export function startServer(opts: ServeOptions) {
 
   const body = async (req: Request): Promise<Record<string, unknown>> => {
     try {
-      return (await req.json()) as Record<string, unknown>;
+      const v: unknown = await req.json();
+      // null, arrays and scalars are valid JSON but not a body; treat them as empty so
+      // field reads give 400s rather than TypeErrors.
+      return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
     } catch {
       return {};
     }
@@ -161,6 +164,14 @@ export function startServer(opts: ServeOptions) {
           }
           const text = str(b['text']);
           return suggest(d, { kind: 'edit', nodeId: str(b['nodeId']) ?? '', ...(text === undefined ? {} : { text }), urls, reason }, aiSource(req));
+        }),
+      },
+      '/api/ai/delivered': {
+        POST: api(true, async (req, d) => {
+          const id = str((await body(req))['chatId']) ?? '';
+          const s = d.sessions.find((x) => x.id === aiSource(req).session);
+          if (s) s.delivered = Math.max(s.delivered ?? 0, Number(id.slice(1)) || 0);
+          return { ok: true };
         }),
       },
       '/api/ai/reply': {

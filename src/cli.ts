@@ -3,7 +3,7 @@ import { networkInterfaces } from 'node:os';
 import { parseArgs } from 'node:util';
 import { runMcp } from './mcp.ts';
 import { startServer } from './server.ts';
-import { absDir, readInstances, registerInstance, token } from './store.ts';
+import { absDir, lockMap, readInstances, registerInstance, token } from './store.ts';
 
 const USAGE = `eda — a mind map you grow one node at a time with an AI that can only suggest
 
@@ -36,12 +36,10 @@ async function main(argv: string[]): Promise<number> {
         return 2;
       }
       const dir = absDir(positionals[0]!);
-      // ponytail: check-then-register, so two serves started in the same instant both pass.
-      // Take a lock file in the map directory if that ever happens outside a test.
-      const other = readInstances().find((i) => i.dir === dir);
-      if (other) {
-        // Two servers on one directory would each overwrite the other's eda.json.
-        console.error(`eda: ${dir} is already served by pid ${other.pid} on port ${other.port}`);
+      const release = lockMap(dir);
+      if (typeof release === 'number') {
+        const other = readInstances().find((i) => i.pid === release);
+        console.error(`eda: ${dir} is already served by pid ${release}${other ? ` on port ${other.port}` : ''}`);
         return 1;
       }
       const session = process.env['CLAUDE_CODE_SESSION_ID'] || undefined;
@@ -63,6 +61,7 @@ async function main(argv: string[]): Promise<number> {
       });
       const stop = (): void => {
         unregister();
+        release();
         process.exit(0);
       };
       process.on('SIGINT', stop);
