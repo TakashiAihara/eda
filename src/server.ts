@@ -117,7 +117,8 @@ export function startServer(opts: ServeOptions) {
       '/api/nodes': {
         POST: api(true, async (req, d) => {
           const b = await body(req);
-          return addChild(d, str(b['parentId']) ?? '', str(b['text']) ?? '');
+          const index = typeof b['index'] === 'number' && Number.isInteger(b['index']) ? b['index'] : undefined;
+          return addChild(d, str(b['parentId']) ?? '', str(b['text']) ?? '', { by: 'human' }, index);
         }),
       },
       '/api/nodes/:id': {

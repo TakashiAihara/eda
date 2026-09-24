@@ -137,10 +137,12 @@ function checkUrl(url: string): string {
 
 // ---- what a person does -------------------------------------------------
 
-export function addChild(doc: MapDoc, parentId: string, text: string, origin: Origin = { by: 'human' }): Node {
+/** `index`: where among the siblings (Enter / Shift+Enter insert next to the selected one); the end when omitted. */
+export function addChild(doc: MapDoc, parentId: string, text: string, origin: Origin = { by: 'human' }, index?: number): Node {
   const parent = must(doc, parentId).node;
   const n = node(nextId(doc, 'n'), text, origin);
-  parent.children.push(n);
+  if (index === undefined || index < 0 || index > parent.children.length) parent.children.push(n);
+  else parent.children.splice(index, 0, n);
   parent.collapsed = false;
   return n;
 }

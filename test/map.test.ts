@@ -211,3 +211,12 @@ test('adopting or rejecting an AI suggestion leaves a note for the session that 
     ['system', 'S1', `${b.id} 却下: 「z」`],
   ]);
 });
+
+test('a node can be inserted at a sibling index (Enter / Shift+Enter)', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'a');
+  addChild(d, 'n1', 'c');
+  addChild(d, 'n1', 'b', { by: 'human' }, 1);
+  addChild(d, 'n1', 'z', { by: 'human' }, 99);
+  expect(d.root.children.map((c) => c.text)).toEqual(['a', 'b', 'c', 'z']);
+});

@@ -32,6 +32,19 @@ claude --dangerously-load-development-channels server:eda
 
 Inside the session, say what you want to think about; the session runs `eda serve` and gives you the URL. A session started with `CLAUDE_CODE_SESSION_ID` is recorded in the map, and `claude --resume <id>` brings you back to it.
 
+## Keys (on the map, as in XMind)
+
+| Key | Action |
+|---|---|
+| Tab | add a child |
+| Enter / Shift+Enter | add a sibling after / before |
+| F2 / Space | edit the node's text |
+| Delete / Backspace | delete the node |
+| ← → ↑ ↓ | parent / first child / previous / next sibling |
+| + / - | expand / collapse |
+
+Suggested nodes appear translucent: click to adopt, ✕ to reject.
+
 ## Files
 
 A map is a directory:

@@ -13,6 +13,13 @@ const TOKEN = localStorage.getItem('eda-token') ?? '';
 let state: State | undefined;
 let selected = 'n1';
 
+/**
+ * An inline editor open on the map (XMind keys): a new child (Tab), a sibling after
+ * (Enter) or before (Shift+Enter), or the selected node's text (F2 / Space).
+ */
+type Editing = { kind: 'child' | 'after' | 'before' | 'rename'; id: string };
+let editing: Editing | null = null;
+
 async function api(method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(path, {
     method,
@@ -99,15 +106,24 @@ function renderMap(s: State): void {
     const cls = ['node', root ? 'root' : '', n.id === selected ? 'sel' : '', n.origin.by === 'ai' ? 'ai' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
       .filter(Boolean)
       .join(' ');
-    const box = h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) }, n.text, tags ? h('span', { class: 'tags' }, tags) : null);
+    const box =
+      editing?.kind === 'rename' && editing.id === n.id
+        ? editor(n.text)
+        : h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) }, n.text, tags ? h('span', { class: 'tags' }, tags) : null);
     const li = h('li', {}, box);
     if (n.children.length) {
       li.append(
         h('button', { class: 'fold', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) }, n.collapsed ? `+${n.children.length}` : '−'),
       );
     }
-    const kids = n.collapsed ? [] : [...n.children.map((c) => item(c)), ...ghosts(n.id)];
-    if (n.collapsed && ghosts(n.id).length) kids.push(...ghosts(n.id));
+    const kids: HTMLElement[] = [];
+    for (const c of n.collapsed ? [] : n.children) {
+      if (editing?.kind === 'before' && editing.id === c.id) kids.push(h('li', {}, editor('')));
+      kids.push(item(c));
+      if (editing?.kind === 'after' && editing.id === c.id) kids.push(h('li', {}, editor('')));
+    }
+    if (editing?.kind === 'child' && editing.id === n.id) kids.push(h('li', {}, editor('')));
+    kids.push(...ghosts(n.id));
     if (kids.length) li.append(h('ul', {}, ...kids));
     return li;
   };
@@ -212,7 +228,8 @@ function renderChat(s: State): void {
 
 /** Sections the person is typing in are left alone; they are redrawn on the next change after. */
 function render(s: State, withMap = true): void {
-  if (withMap) {
+  // A redraw would drop what is being typed into the map's inline editor.
+  if (withMap && !editing) {
     renderHead(s);
     renderMap(s);
   }
@@ -246,3 +263,104 @@ else {
   // mousedown that moved focus and the click.
   document.addEventListener('focusout', () => setTimeout(() => state && render(state, false)));
 }
+
+/** The inline editor. Enter commits, Esc or leaving it cancels. */
+function editor(initial: string): HTMLElement {
+  const input = h('input', { class: 'node edit', value: initial }) as HTMLInputElement;
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') return close();
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      void commit(input.value.trim());
+    }
+  });
+  input.addEventListener('blur', () => editing && close());
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  });
+  return input;
+}
+
+function close(): void {
+  editing = null;
+  if (state) renderMap(state);
+}
+
+async function commit(text: string): Promise<void> {
+  const e = editing;
+  if (!e || !state || text === '') return close();
+  editing = null;
+  if (e.kind === 'rename') {
+    await api('PATCH', `/api/nodes/${e.id}`, { text });
+  } else if (e.kind === 'child') {
+    selected = ((await api('POST', '/api/nodes', { parentId: e.id, text })) as Node).id;
+  } else {
+    const hit = find(state.doc.root, e.id);
+    if (!hit?.parent) return close();
+    const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
+    selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at })) as Node).id;
+  }
+  await refresh(true);
+}
+
+function open(kind: Editing['kind']): void {
+  if (!state) return;
+  const hit = find(state.doc.root, selected);
+  if (!hit) return;
+  // The root has no siblings; Enter on it adds a child, as in XMind.
+  editing = kind !== 'child' && kind !== 'rename' && !hit.parent ? { kind: 'child', id: selected } : { kind, id: selected };
+  if (editing.kind === 'child' && hit.node.collapsed) hit.node.collapsed = false;
+  renderMap(state);
+}
+
+/** XMind's keys, active while focus is on the map rather than in a text field. */
+document.addEventListener('keydown', (e) => {
+  const t = e.target as HTMLElement;
+  if (editing || !state || t.closest('input, textarea, aside')) return;
+  const hit = find(state.doc.root, selected);
+  if (!hit) return;
+  const { node: n, parent } = hit;
+  const siblings = parent?.children ?? [n];
+  const i = siblings.findIndex((c) => c.id === n.id);
+  const go = (id: string | undefined) => {
+    e.preventDefault();
+    if (id) select(id);
+  };
+  switch (e.key) {
+    case 'Tab':
+      e.preventDefault();
+      return open('child');
+    case 'Enter':
+      e.preventDefault();
+      return open(e.shiftKey ? 'before' : 'after');
+    case 'F2':
+    case ' ':
+      e.preventDefault();
+      return open('rename');
+    case 'Delete':
+    case 'Backspace':
+      if (!parent) return;
+      e.preventDefault();
+      if (n.children.length && !confirm(`「${n.text}」と子ノード ${n.children.length} 件を消しますか`)) return;
+      selected = parent.id;
+      void act('DELETE', `/api/nodes/${n.id}`);
+      return;
+    case 'ArrowLeft':
+      return go(parent?.id);
+    case 'ArrowRight':
+      return go(n.collapsed ? undefined : n.children[0]?.id);
+    case 'ArrowUp':
+      return go(siblings[i - 1]?.id);
+    case 'ArrowDown':
+      return go(siblings[i + 1]?.id);
+    case '+':
+    case '=':
+    case '-':
+      if (!n.children.length) return;
+      e.preventDefault();
+      void act('PATCH', `/api/nodes/${n.id}`, { collapsed: e.key === '-' });
+      return;
+  }
+});
