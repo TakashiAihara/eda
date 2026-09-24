@@ -110,8 +110,8 @@ function renderMap(s: State): void {
       .map((x) =>
         h('li', {},
           // Clicking the ghost adopts it as written; rewriting first is the card in the sidebar.
-          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: () => act('POST', `/api/suggestions/${x.id}/accept`) }, x.text),
-          h('button', { type: 'button', class: 'fold', 'aria-label': `提案「${x.text}」を却下`, click: () => act('POST', `/api/suggestions/${x.id}/reject`) }, '✕'),
+          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: (e) => decide(e, x.id, 'accept') }, x.text),
+          h('button', { type: 'button', class: 'fold', 'aria-label': `提案「${x.text}」を却下`, click: (e) => decide(e, x.id, 'reject') }, '✕'),
         ),
       );
 
@@ -331,7 +331,7 @@ function open(kind: Editing['kind']): void {
   if (!hit) return;
   // The root has no siblings; Enter on it adds a child, as in XMind.
   editing = kind !== 'child' && kind !== 'rename' && !hit.parent ? { kind: 'child', id: selected } : { kind, id: selected };
-  if (editing.kind === 'child' && hit.node.collapsed) hit.node.collapsed = false;
+
   renderMap(state);
   // Focused synchronously: keys typed right after Tab would otherwise land nowhere.
   // The selection can also sit inside a collapsed branch, where there is nowhere to put
@@ -397,3 +397,12 @@ document.addEventListener('keydown', (e) => {
       return;
   }
 });
+
+/** Adopt or reject from the map. Both buttons go dead on the first click: a second would 404. */
+function decide(e: Event, id: string, what: 'accept' | 'reject'): void {
+  const li = (e.currentTarget as HTMLElement).closest('li');
+  for (const b of li?.querySelectorAll('button') ?? []) b.disabled = true;
+  void act('POST', `/api/suggestions/${id}/${what}`).catch(() => {
+    for (const b of li?.querySelectorAll('button') ?? []) b.disabled = false;
+  });
+}
