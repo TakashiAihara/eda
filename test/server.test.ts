@@ -156,6 +156,22 @@ test('a channel event carries the message and the node it is about', () => {
   expect(e.meta).toEqual({ map: '/m', chat_id: 'c7', node_id: 'n2' });
 });
 
+test('a directory with only a map.md keeps it: its lines come back as candidates', async () => {
+  const d2 = mkdtempSync(join(tmpdir(), 'eda-md-'));
+  writeFileSync(join(d2, 'map.md'), '# ideas\n\n- one\n  - one.a\n- two\n');
+  const s2 = startServer({ dir: d2, host: '127.0.0.1', port: 0 });
+  try {
+    const doc = s2.doc;
+    expect(doc.suggestions.map((s) => [s.kind, s.text])).toEqual([
+      ['edit', 'ideas'],
+      ['add', 'one'],
+      ['add', 'two'],
+    ]);
+  } finally {
+    s2.server.stop(true);
+  }
+});
+
 test('a session with no map is told how to start one', async () => {
   const lost = new Client('S9', '/w', () => []);
   await expect(runTool(lost, 'read_map', {})).rejects.toThrow(/eda serve/);

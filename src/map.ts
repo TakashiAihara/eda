@@ -388,13 +388,22 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
   return out;
 }
 
+/**
+ * Add what a map.md edit produced, skipping what is already waiting. Counted, not just
+ * matched: two identical new siblings in one edit are two candidates, and the same edit
+ * seen again adds none.
+ */
 export function addCandidates(doc: MapDoc, found: NewSuggestion[]): void {
   const at = new Date().toISOString();
+  const key = (s: NewSuggestion): string =>
+    JSON.stringify([s.kind, s.kind === 'add' ? s.parentId : s.nodeId, s.text ?? '', s.kind === 'add' ? (s.children ?? []) : []]);
+  const seen = new Map<string, number>();
   for (const f of found) {
-    const key = (s: NewSuggestion): string =>
-      JSON.stringify([s.kind, s.kind === 'add' ? s.parentId : s.nodeId, s.text ?? '', s.kind === 'add' ? (s.children ?? []) : []]);
-    const dup = doc.suggestions.some((s) => s.source.by === 'md-edit' && key(s) === key(f));
-    if (!dup) doc.suggestions.push({ ...f, id: nextId(doc, 's'), at } as Suggestion);
+    const k = key(f);
+    const nth = (seen.get(k) ?? 0) + 1;
+    seen.set(k, nth);
+    const waiting = doc.suggestions.filter((s) => s.source.by === 'md-edit' && key(s) === k).length;
+    if (waiting < nth) doc.suggestions.push({ ...f, id: nextId(doc, 's'), at } as Suggestion);
   }
 }
 

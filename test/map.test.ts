@@ -127,6 +127,14 @@ test('markdown round-trips and a hand edit becomes candidates, not changes', () 
   expect(d.suggestions.filter((s) => s.text === 'a2')).toHaveLength(1);
 });
 
+test('two identical new sibling lines are two candidates, and seeing the edit again adds none', () => {
+  const d = newMap('p');
+  const edit = parseMarkdown('# p\n\n- same\n- same\n');
+  addCandidates(d, diffOutline(d, edit));
+  addCandidates(d, diffOutline(d, edit));
+  expect(d.suggestions.map((s) => s.text)).toEqual(['same', 'same']);
+});
+
 test('two new lines with the same text but different children are two candidates', () => {
   const d = newMap('p');
   addCandidates(d, diffOutline(d, parseMarkdown('# p\n\n- same\n  - x\n')));
@@ -171,6 +179,8 @@ test('processes racing for one map directory: exactly one wins', async () => {
   const { join } = await import('node:path');
   const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'eda-race-'));
   const go = join(dir, 'go');
+  // A dead owner's lock is there first, so every racer goes through the takeover.
+  writeFileSync(join(dir, 'eda.lock'), '999999999');
   const script = `
     import { existsSync } from 'node:fs';
     import { lockMap } from '${join(import.meta.dir, '../src/store.ts')}';
@@ -181,6 +191,8 @@ test('processes racing for one map directory: exactly one wins', async () => {
   const procs = Array.from({ length: 8 }, () => Bun.spawn(['bun', '-e', script], { stdout: 'pipe' }));
   await Bun.sleep(400);
   writeFileSync(go, '');
-  const out = await Promise.all(procs.map((p) => new Response(p.stdout).text()));
-  expect(out.filter((o) => o.trim() === 'won')).toHaveLength(1);
+  const out = (await Promise.all(procs.map((p) => new Response(p.stdout).text()))).map((o) => o.trim());
+  expect(await Promise.all(procs.map((p) => p.exited))).toEqual(Array(8).fill(0));
+  expect(out.filter((o) => o === 'won')).toHaveLength(1);
+  expect(out.filter((o) => o === 'lost')).toHaveLength(7);
 });

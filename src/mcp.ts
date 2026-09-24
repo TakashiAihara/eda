@@ -9,7 +9,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { existsSync, realpathSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
+import { resolve } from 'node:path';
 import type { Chat, MapDoc } from './map.ts';
 import { type Instance, readInstances, token } from './store.ts';
 
@@ -66,8 +68,11 @@ export class Client {
       return base === undefined ? [] : [{ dir: i.dir, base }];
     });
     if (dir !== undefined) {
-      const want = dir.replace(/\/+$/, '');
-      return running.filter((r) => r.dir === want || r.dir.endsWith(`/${want}`)).map((r) => ({ ...r, attach: true }));
+      // Resolved against this process's cwd (the session's) and through symlinks, the way
+      // `eda serve` recorded it.
+      const abs = resolve(this.cwd, dir);
+      const want = existsSync(abs) ? realpathSync(abs) : abs;
+      return running.filter((r) => r.dir === want).map((r) => ({ ...r, attach: true }));
     }
     const mine: Target[] = [];
     for (const r of running) {

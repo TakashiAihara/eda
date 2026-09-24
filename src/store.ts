@@ -44,6 +44,12 @@ export function openMap(dir: string, title?: string): MapDoc {
   const doc = loadMap(dir);
   if (doc) return doc;
   const fresh = newMap(title ?? 'untitled');
+  if (existsSync(join(dir, MD_FILE))) {
+    // A map.md written before eda ever ran here: keep it for syncMarkdown to turn into
+    // candidates, instead of exporting the empty map over it.
+    writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(fresh, null, 2)}\n`);
+    return fresh;
+  }
   saveMap(dir, fresh);
   return fresh;
 }
@@ -165,13 +171,20 @@ export function lockMap(dir: string): (() => void) | number {
       continue; // released between our attempt and the read
     }
     if (owner && alive(owner)) return owner;
-    // ponytail: two processes taking over the same dead lock at once can both unlink;
-    // one then wins the publish and the other sees it alive on its next turn.
-    try {
-      unlinkSync(p);
-    } catch {
-      /* someone else took it over */
+    // Taking over is serialised by a second lock: without it two processes that both read
+    // the dead owner could each unlink — the second removing the first's fresh lock.
+    const take = `${p}.take`;
+    if (publish(take, String(process.pid))) {
+      try {
+        if (Number(readFileSync(p, 'utf8')) === owner) unlinkSync(p);
+      } catch {
+        /* already gone */
+      } finally {
+        unlinkSync(take);
+      }
     }
+    // ponytail: a process killed while holding `.take` leaves it behind and blocks takeover;
+    // remove eda.lock.take by hand if a map refuses to start with its owner dead.
   }
   throw new Error(`could not take ${p}`);
 }
