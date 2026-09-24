@@ -86,7 +86,23 @@ function renderHead(s: State): void {
   );
 }
 
+/** The selection, or the collapsed ancestor that hides it (XMind moves the selection there). */
+function visibleSelection(root: Node, id: string): string {
+  const path = (n: Node): Node[] | undefined => {
+    if (n.id === id) return [n];
+    for (const c of n.children) {
+      const p = path(c);
+      if (p) return [n, ...p];
+    }
+    return undefined;
+  };
+  const p = path(root) ?? [root];
+  const hidden = p.findIndex((n) => n.collapsed);
+  return hidden === -1 || hidden === p.length - 1 ? id : p[hidden]!.id;
+}
+
 function renderMap(s: State): void {
+  selected = visibleSelection(s.doc.root, selected);
   const pendingEdits = new Set(s.doc.suggestions.flatMap((x) => (x.kind === 'edit' ? [x.nodeId] : [])));
   const ghosts = (parentId: string): HTMLElement[] =>
     s.doc.suggestions
@@ -275,10 +291,14 @@ function editor(initial: string): HTMLElement {
       void commit(input.value.trim());
     }
   });
-  input.addEventListener('blur', () => editing && close());
-  setTimeout(() => {
-    input.focus();
-    input.select();
+  // Not redrawn at once: the blur comes from the mousedown of a click elsewhere on the map,
+  // and redrawing now would detach that click's target. Redrawn after the click, or shortly.
+  input.addEventListener('blur', () => {
+    if (!editing) return;
+    editing = null;
+    const later = () => document.contains(input) && state && renderMap(state);
+    document.addEventListener('click', () => setTimeout(later), { once: true });
+    setTimeout(later, 300);
   });
   return input;
 }
@@ -313,12 +333,25 @@ function open(kind: Editing['kind']): void {
   editing = kind !== 'child' && kind !== 'rename' && !hit.parent ? { kind: 'child', id: selected } : { kind, id: selected };
   if (editing.kind === 'child' && hit.node.collapsed) hit.node.collapsed = false;
   renderMap(state);
+  // Focused synchronously: keys typed right after Tab would otherwise land nowhere.
+  // The selection can also sit inside a collapsed branch, where there is nowhere to put
+  // the editor; without the reset the keys would stay blocked by an editor nobody can see.
+  const input = document.querySelector<HTMLInputElement>('input.node.edit');
+  if (!input) editing = null;
+  else {
+    input.focus();
+    input.select();
+  }
 }
 
 /** XMind's keys, active while focus is on the map rather than in a text field. */
 document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
-  if (editing || !state || t.closest('input, textarea, aside')) return;
+  // Only the map's own selection: not a focused ghost / fold / reject button (their Enter
+  // and Space are theirs), not a text field, not the sidebar, and no modified keys other
+  // than Shift+Enter (Shift+Tab, Ctrl+- and the like belong to the browser).
+  if (editing || !state || t.closest('input, textarea, aside, .ghost, .fold')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || (e.shiftKey && e.key !== 'Enter' && e.key !== '+')) return;
   const hit = find(state.doc.root, selected);
   if (!hit) return;
   const { node: n, parent } = hit;

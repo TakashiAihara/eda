@@ -169,10 +169,11 @@ export function removeNode(doc: MapDoc, id: string): void {
   const { parent } = must(doc, id);
   if (!parent) throw new MapError('the root cannot be removed');
   parent.children = parent.children.filter((c) => c.id !== id);
-  // A suggestion aimed at a node that is gone could never be adopted.
-  doc.suggestions = doc.suggestions.filter(
-    (s) => (s.kind === 'add' ? find(doc.root, s.parentId) : find(doc.root, s.nodeId)) !== undefined,
-  );
+  // A suggestion aimed at a node that is gone could never be adopted. The session that made
+  // it is waiting for an outcome, so it is told rather than left waiting.
+  const gone = doc.suggestions.filter((s) => find(doc.root, s.kind === 'add' ? s.parentId : s.nodeId) === undefined);
+  doc.suggestions = doc.suggestions.filter((s) => !gone.includes(s));
+  for (const s of gone) decided(doc, s, `取り消し: 「${s.text ?? s.urls.join(' ')}」の対象ノードが削除された`, parent.id);
 }
 
 export function addUrl(doc: MapDoc, id: string, url: string, origin: Origin = { by: 'human' }): void {
@@ -296,8 +297,14 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
   }
   for (const u of urls) addUrl(doc, n.id, u, origin);
   if (s.kind === 'add') for (const c of s.children ?? []) addOutline(doc, n, c);
-  const rewritten = text !== undefined && text !== s.text ? ` (直して採用: 「${text}」)` : '';
-  decided(doc, s, `採用: 「${s.text ?? s.urls.join(' ')}」${rewritten} → ${n.id}`, n.id);
+  // What actually went in, which is not always what was suggested: the person may have
+  // rewritten the text, kept the node's text, or changed the URLs.
+  const parts = [
+    s.kind === 'add' || text !== undefined ? `本文「${n.text}」` : '本文は変えず',
+    ...(urls.length ? [`URL ${urls.join(' ')}`] : []),
+  ];
+  const changed = (text !== undefined && text !== s.text) || (s.kind === 'edit' && text === undefined && s.text !== undefined) || urls.join() !== s.urls.join();
+  decided(doc, s, `${changed ? '直して採用' : '採用'}: ${parts.join(' / ')} → ${n.id}`, n.id);
   return n;
 }
 

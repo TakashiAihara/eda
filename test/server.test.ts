@@ -310,6 +310,13 @@ test('a session whose cwd is not ASCII can reach its map', async () => {
   expect(s7.cwd).toBe('/tmp/日本語');
 });
 
+test('POST /api/nodes inserts at the given sibling index', async () => {
+  const before = (await person('GET', '/api/state')).json.doc.root.children.map((c: any) => c.id);
+  const { json } = await person('POST', '/api/nodes', { parentId: 'n1', text: 'first', index: 0 });
+  const after = (await person('GET', '/api/state')).json.doc.root.children.map((c: any) => c.id);
+  expect(after).toEqual([json.id, ...before]);
+});
+
 test('a session with no map is told how to start one', async () => {
   const lost = new Client('S9', '/w', () => []);
   await expect(runTool(lost, 'read_map', {})).rejects.toThrow(/eda serve/);
