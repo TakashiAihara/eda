@@ -84,7 +84,13 @@ function renderMap(s: State): void {
   const ghosts = (parentId: string): HTMLElement[] =>
     s.doc.suggestions
       .filter((x): x is Extract<Suggestion, { kind: 'add' }> => x.kind === 'add' && x.parentId === parentId)
-      .map((x) => h('li', {}, h('div', { class: 'node ghost', title: x.reason }, `? ${x.text}`)));
+      .map((x) =>
+        h('li', {},
+          // Clicking the ghost adopts it as written; rewriting first is the card in the sidebar.
+          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: () => act('POST', `/api/suggestions/${x.id}/accept`) }, x.text),
+          h('button', { type: 'button', class: 'fold', 'aria-label': `提案「${x.text}」を却下`, click: () => act('POST', `/api/suggestions/${x.id}/reject`) }, '✕'),
+        ),
+      );
 
   const item = (n: Node, root = false): HTMLElement => {
     const tags = [n.urls.length ? `🔗${n.urls.length}` : '', n.tasks.length ? `✓${n.tasks.length}` : '', n.note ? '📝' : '']

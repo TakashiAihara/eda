@@ -221,12 +221,15 @@ export type AiInput =
  * a model that loops would otherwise pile up twenty candidates, which is the giant map
  * again with an extra click per node.
  */
+/** How many AI suggestions one session may have waiting. Open question D-12 (1 = the requirement as written). */
+export const MAX_PENDING = 1;
+
 export function suggest(doc: MapDoc, input: AiInput, source: { by: 'ai'; session?: string; model?: string }): Suggestion {
-  const waiting = doc.suggestions.find(
+  const waiting = doc.suggestions.filter(
     (s) => s.source.by === 'ai' && s.source.session === source.session && s.source.model === source.model,
   );
-  if (waiting) {
-    throw new MapError(`suggestion ${waiting.id} is still waiting for the person; one at a time`, 409);
+  if (waiting.length >= MAX_PENDING) {
+    throw new MapError(`${waiting.map((w) => w.id).join(', ')} still waiting for the person; one at a time`, 409);
   }
   const urls = (input.urls ?? []).map(checkUrl);
   const reason = input.reason.trim();
