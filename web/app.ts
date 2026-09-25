@@ -163,7 +163,7 @@ function renderMap(s: State): void {
     const box =
       editing?.kind === 'rename' && editing.id === n.id
         ? editor(n.text)
-        : h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) },
+        : h('button', { type: 'button', class: cls, 'data-id': n.id, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) },
             n.origin.by === 'ai' ? h('span', { class: 'tag ai', role: 'img', 'aria-label': 'AI の提案から採用' }, icon('ai')) : null,
             h('span', { class: 'text' }, n.text),
             tag('link', n.urls.length, `URL ${n.urls.length} 件`),
@@ -372,15 +372,20 @@ async function commit(text: string): Promise<void> {
   const e = editing;
   if (!e || !state || text === '') return close();
   editing = null;
-  if (e.kind === 'rename') {
-    await api('PATCH', `/api/nodes/${e.id}`, { text });
-  } else if (e.kind === 'child') {
-    selected = ((await api('POST', '/api/nodes', { parentId: e.id, text })) as Node).id;
-  } else {
-    const hit = find(state.doc.root, e.id);
-    if (!hit?.parent) return close();
-    const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
-    selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at })) as Node).id;
+  try {
+    if (e.kind === 'rename') {
+      await api('PATCH', `/api/nodes/${e.id}`, { text });
+    } else if (e.kind === 'child') {
+      selected = ((await api('POST', '/api/nodes', { parentId: e.id, text })) as Node).id;
+    } else {
+      const hit = find(state.doc.root, e.id);
+      if (!hit?.parent) return close();
+      const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
+      selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at })) as Node).id;
+    }
+  } catch {
+    // api() has shown the error (the node was deleted elsewhere, say); the redraw below
+    // still has to take the editor away.
   }
   await refresh(true);
 }
@@ -463,7 +468,6 @@ function showKeys(): void {
   d.showModal();
 }
 
-
 document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
   // Only the map's own selection: not a focused ghost / fold / toolbar button (their Enter
@@ -471,6 +475,9 @@ document.addEventListener('keydown', (e) => {
   // the table (Shift+Tab, Ctrl+W and the like) stay the browser's.
   if (editing || !state || t.closest('input, textarea, aside, header, dialog, .ghost, .fold')) return;
   const key = KEYS.find((k) => k.combos.includes(combo(e)));
+  // Tab can put focus on a node that is not the selected one; the keys act on what has focus.
+  const focusedNode = t.closest<HTMLElement>('.node[data-id]')?.dataset['id'];
+  if (key && focusedNode) selected = focusedNode;
   const hit = find(state.doc.root, selected);
   if (!key || !hit) return;
   e.preventDefault();
