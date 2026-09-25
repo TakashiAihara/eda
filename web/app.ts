@@ -1,4 +1,7 @@
 import { find, kaneoTaskUrl, type MapDoc, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
+import { icon } from './icons.ts';
+import { combo, show } from './keys.ts';
+import { clampZoom, pathTo, topicColours, visibleSelection } from './view.ts';
 
 type State = { rev: number; dir: string; doc: MapDoc; kaneoHost: string | null };
 
@@ -12,6 +15,9 @@ const TOKEN = localStorage.getItem('eda-token') ?? '';
 
 let state: State | undefined;
 let selected = 'n1';
+/** The node the map is drilled down to (XMind F6): drawn as the root. Not stored. */
+let drilled = 'n1';
+let zoom = clampZoom(Number(localStorage.getItem('eda-zoom')) || 1);
 
 /**
  * An inline editor open on the map (XMind keys): a new child (Tab), a sibling after
@@ -20,7 +26,8 @@ let selected = 'n1';
 type Editing = { kind: 'child' | 'after' | 'before' | 'rename'; id: string };
 let editing: Editing | null = null;
 
-async function api(method: string, path: string, body?: unknown): Promise<unknown> {
+/** `quiet`: the caller reports a refusal itself (with more to say than the server's message). */
+async function api(method: string, path: string, body?: unknown, quiet = false): Promise<unknown> {
   const res = await fetch(path, {
     method,
     headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
@@ -28,11 +35,14 @@ async function api(method: string, path: string, body?: unknown): Promise<unknow
   });
   const json = (await res.json()) as { error?: string };
   if (!res.ok) {
-    alert(json.error ?? res.statusText);
-    throw new Error(json.error);
+    if (!quiet) alert(json.error ?? res.statusText);
+    throw new Refused(json.error ?? res.statusText);
   }
   return json;
 }
+
+/** Refused by the server; alerted unless the call was quiet. */
+class Refused extends Error {}
 
 /**
  * What the person has typed and not sent, by field. Sections are redrawn from state, and
@@ -58,7 +68,7 @@ async function act(method: string, path: string, body?: unknown, sent?: [string 
 }
 
 type Attrs = Record<string, string | ((e: Event) => void)>;
-function h(tag: string, attrs: Attrs = {}, ...kids: (string | HTMLElement | null | false)[]): HTMLElement {
+function h(tag: string, attrs: Attrs = {}, ...kids: (string | Element | null | false)[]): HTMLElement {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (typeof v === 'function') el.addEventListener(k, v);
@@ -79,30 +89,60 @@ const originLabel = (o: Origin): string =>
   o.by === 'human' ? '人が追加' : o.by === 'md-edit' ? 'map.md の編集を採用' : `AI の提案を採用${o.model ? ` (${o.model})` : ''}`;
 
 function renderHead(s: State): void {
+  const crumbs = pathTo(s.doc.root, drilled);
   $('head').replaceChildren(
     h('h1', {}, s.doc.root.text),
-    h('span', { class: 'meta' }, s.dir),
+    // Drilled down: the way back up, each step clickable.
+    ...(crumbs.length > 1
+      ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', 'data-key': `crumb:${n.id}`, click: (e) => (e.preventDefault(), drill(n.id, false)) }, n.text)]))]
+      : []),
+    h('span', { class: 'meta', title: s.dir }, s.dir.split('/').pop() ?? s.dir),
     ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `${x.cwd ? `cd ${x.cwd} && ` : ''}claude --resume ${x.id}`))),
+    // A mouse click does not move focus here, so the map keeps its keys after a zoom click;
+    // reaching the buttons with Tab still focuses them.
+    h('span', { class: 'tools', mousedown: (e) => e.preventDefault() },
+      h('button', { class: 'icon-btn', 'data-key': 'zoom-out', title: '縮小 (Ctrl+-)', 'aria-label': '縮小', click: () => setZoom(zoom - 0.1) }, icon('minus')),
+      h('button', { class: 'zoom', 'data-key': 'zoom-reset', title: '等倍に戻す (Ctrl+0)', click: () => setZoom(1) }, `${Math.round(zoom * 100)}%`),
+      h('button', { class: 'icon-btn', 'data-key': 'zoom-in', title: '拡大 (Ctrl+=)', 'aria-label': '拡大', click: () => setZoom(zoom + 0.1) }, icon('plus')),
+      h('button', { class: 'icon-btn', 'data-key': 'keys', title: 'キー一覧 (?)', 'aria-label': 'キー一覧', click: showKeys }, icon('keys')),
+    ),
   );
 }
 
-/** The selection, or the collapsed ancestor that hides it (XMind moves the selection there). */
-function visibleSelection(root: Node, id: string): string {
-  const path = (n: Node): Node[] | undefined => {
-    if (n.id === id) return [n];
-    for (const c of n.children) {
-      const p = path(c);
-      if (p) return [n, ...p];
-    }
-    return undefined;
-  };
-  const p = path(root) ?? [root];
-  const hidden = p.findIndex((n) => n.collapsed);
-  return hidden === -1 || hidden === p.length - 1 ? id : p[hidden]!.id;
+function setZoom(z: number): void {
+  zoom = clampZoom(z);
+  localStorage.setItem('eda-zoom', String(zoom));
+  // In place: redrawing the header would take focus off the zoom button being pressed.
+  document.querySelector<HTMLElement>('.tree')?.style.setProperty('zoom', String(zoom));
+  const label = document.querySelector('header .zoom');
+  if (label) label.textContent = `${Math.round(zoom * 100)}%`;
+}
+
+/**
+ * Drilling down selects the new top, as XMind does. Drilling up leaves the selection where it
+ * was (the render moves it only if a collapsed node now hides it); selecting the new top
+ * instead would make Shift+F6 at the top level a jump to the root.
+ */
+function drill(id: string, select = true): void {
+  drilled = id;
+  if (select) selected = id;
+  // Off the button that did it: the sidebar is not redrawn while it holds focus.
+  (document.activeElement as HTMLElement | null)?.blur();
+  if (state) render(state);
+}
+
+/** The node drawn as the root: the drilled-down one, or the map's root once that is gone. */
+function viewTop(s: State): Node {
+  const hit = find(s.doc.root, drilled);
+  if (!hit) drilled = s.doc.root.id;
+  return hit?.node ?? s.doc.root;
 }
 
 function renderMap(s: State): void {
-  selected = visibleSelection(s.doc.root, selected);
+  const top = viewTop(s);
+  // Drilled into a collapsed node: show what is under it rather than a lone pill. View only.
+  const drilledIn = top !== s.doc.root;
+  selected = visibleSelection(top, selected, drilledIn);
   const pendingEdits = new Set(s.doc.suggestions.flatMap((x) => (x.kind === 'edit' ? [x.nodeId] : [])));
   const ghosts = (parentId: string): HTMLElement[] =>
     s.doc.suggestions
@@ -110,32 +150,42 @@ function renderMap(s: State): void {
       .map((x) =>
         h('li', {},
           // Clicking the ghost adopts it as written; rewriting first is the card in the sidebar.
-          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: (e) => decide(e, x.id, 'accept') }, x.text),
-          h('button', { type: 'button', class: 'fold', 'aria-label': `提案「${x.text}」を却下`, click: (e) => decide(e, x.id, 'reject') }, '✕'),
+          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: (e) => decide(e, x.id, 'accept') }, h('span', { class: 'text' }, x.text)),
+          h('button', { type: 'button', class: 'fold reject', title: '却下', 'aria-label': `提案「${x.text}」を却下`, click: (e) => decide(e, x.id, 'reject') }, icon('close')),
         ),
       );
 
-  const item = (n: Node, root = false): HTMLElement => {
-    const tags = [n.urls.length ? `🔗${n.urls.length}` : '', n.tasks.length ? `✓${n.tasks.length}` : '', n.note ? '📝' : '']
-      .filter(Boolean)
-      .join(' ');
-    const cls = ['node', root ? 'root' : '', n.id === selected ? 'sel' : '', n.origin.by === 'ai' ? 'ai' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
+  const tag = (name: 'link' | 'task' | 'note', count: number, label: string) =>
+    count ? h('span', { class: 'tag', title: label, role: 'img', 'aria-label': label }, icon(name), count > 1 ? String(count) : '') : null;
+
+  const colours = topicColours(top.children.map((c) => c.id));
+  const item = (n: Node, depth = 0): HTMLElement => {
+    const shown = n.collapsed && !(depth === 0 && drilledIn) ? [] : n.children;
+    const cls = ['node', depth === 0 ? 'root' : depth === 1 ? 'topic' : '', n.id === selected ? 'sel' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
       .filter(Boolean)
       .join(' ');
     const box =
       editing?.kind === 'rename' && editing.id === n.id
         ? editor(n.text)
-        : h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) }, n.text, tags ? h('span', { class: 'tags' }, tags) : null);
-    const li = h('li', {}, box);
-    if (n.children.length) {
+        : h('button', { type: 'button', class: cls, 'data-id': n.id, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) },
+            n.origin.by === 'ai' ? h('span', { class: 'tag ai', role: 'img', 'aria-label': 'AI の提案から採用' }, icon('ai')) : null,
+            h('span', { class: 'text' }, n.text),
+            tag('link', n.urls.length, `URL ${n.urls.length} 件`),
+            tag('task', n.tasks.length, `kaneo タスク ${n.tasks.length} 件`),
+            tag('note', n.note ? 1 : 0, 'ノートあり'),
+          );
+    // A main topic's colour, inherited by everything under it.
+    const li = h('li', depth === 1 ? { style: `--branch: var(--b${colours.get(n.id) ?? 0})` } : {}, box);
+    if (n.children.length && !(depth === 0 && drilledIn)) {
       li.append(
-        h('button', { class: 'fold', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) }, n.collapsed ? `+${n.children.length}` : '−'),
+        h('button', { class: 'fold', title: n.collapsed ? '展開 (+)' : '折りたたむ (-)', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) },
+          n.collapsed ? `+${n.children.length}` : icon('minus')),
       );
     }
     const kids: HTMLElement[] = [];
-    for (const c of n.collapsed ? [] : n.children) {
+    for (const c of shown) {
       if (editing?.kind === 'before' && editing.id === c.id) kids.push(h('li', {}, editor('')));
-      kids.push(item(c));
+      kids.push(item(c, depth + 1));
       if (editing?.kind === 'after' && editing.id === c.id) kids.push(h('li', {}, editor('')));
     }
     if (editing?.kind === 'child' && editing.id === n.id) kids.push(h('li', {}, editor('')));
@@ -143,7 +193,11 @@ function renderMap(s: State): void {
     if (kids.length) li.append(h('ul', {}, ...kids));
     return li;
   };
-  $('map').replaceChildren(h('ul', { class: 'tree' }, item(s.doc.root, true)));
+  $('map').replaceChildren(
+    h('ul', { class: 'tree', style: `zoom: ${zoom}` }, item(top)),
+    // An empty map gives no clue where to start; XMind's first topic is one Tab away.
+    ...(top.children.length || editing || drilledIn || s.doc.suggestions.length ? [] : [h('p', { class: 'hint' }, 'Tab で子ノードを追加。? でキー一覧。')]),
+  );
 }
 
 function renderNode(s: State): void {
@@ -175,7 +229,10 @@ function renderNode(s: State): void {
           ),
           h('input', { placeholder: 'kaneo のタスク URL を貼ってリンク (Enter)', 'data-draft': `${n.id}:task`, keydown: onEnter((v, k) => act('POST', `${base}/tasks`, { url: v }, [k, v])) }),
         ]),
-    ...(hit.parent ? [h('div', { class: 'row' }, h('button', { click: () => confirm(`「${n.text}」と子ノードを消しますか`) && act('DELETE', base) }, 'このノードを削除'))] : []),
+    // A pointer route to F6, which on a Mac needs Fn and some browsers keep for themselves.
+    ...(n.children.length && n.id !== drilled ? [h('div', { class: 'row' }, h('button', { click: () => drill(n.id) }, 'このノードに絞って表示 (F6)'))] : []),
+    // Not the drilled-down top either, as with the keyboard: it is the view's root.
+    ...(hit.parent && n.id !== drilled ? [h('div', { class: 'row' }, h('button', { class: 'danger', click: () => confirm(`「${n.text}」と子ノードを消しますか`) && act('DELETE', base) }, 'このノードを削除'))] : []),
   );
 }
 
@@ -246,7 +303,12 @@ function renderChat(s: State): void {
 function render(s: State, withMap = true): void {
   // A redraw would drop what is being typed into the map's inline editor.
   if (withMap && !editing) {
+    // Settled before the header, whose breadcrumb reads it.
+    viewTop(s);
+    // The header is rebuilt on every change; a toolbar button reached with Tab keeps its focus.
+    const focused = document.activeElement?.closest('header') ? document.activeElement?.getAttribute('data-key') : null;
     renderHead(s);
+    if (focused) document.querySelector<HTMLElement>(`header [data-key="${CSS.escape(focused)}"]`)?.focus();
     renderMap(s);
   }
   const busy = document.activeElement?.closest('aside section')?.id;
@@ -296,7 +358,9 @@ function editor(initial: string): HTMLElement {
   input.addEventListener('blur', () => {
     if (!editing) return;
     editing = null;
-    const later = () => document.contains(input) && state && renderMap(state);
+    // The header too: a change that arrived while editing (the drilled-down node deleted
+    // elsewhere) was held back from both.
+    const later = () => document.contains(input) && state && render(state);
     document.addEventListener('click', () => setTimeout(later), { once: true });
     setTimeout(later, 300);
   });
@@ -305,32 +369,49 @@ function editor(initial: string): HTMLElement {
 
 function close(): void {
   editing = null;
-  if (state) renderMap(state);
+  if (state) render(state);
 }
 
 async function commit(text: string): Promise<void> {
   const e = editing;
   if (!e || !state || text === '') return close();
   editing = null;
-  if (e.kind === 'rename') {
-    await api('PATCH', `/api/nodes/${e.id}`, { text });
-  } else if (e.kind === 'child') {
-    selected = ((await api('POST', '/api/nodes', { parentId: e.id, text })) as Node).id;
-  } else {
-    const hit = find(state.doc.root, e.id);
-    if (!hit?.parent) return close();
-    const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
-    selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at })) as Node).id;
+  let saved = false;
+  try {
+    if (e.kind === 'rename') {
+      await api('PATCH', `/api/nodes/${e.id}`, { text }, true);
+      saved = true;
+    } else if (e.kind === 'child') {
+      selected = ((await api('POST', '/api/nodes', { parentId: e.id, text }, true)) as Node).id;
+      saved = true;
+    } else {
+      const hit = find(state.doc.root, e.id);
+      // The node Enter was pressed on is gone (deleted elsewhere): nowhere to put it.
+      if (!hit?.parent) throw new Error('隣のノードが削除されました');
+      const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
+      selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at }, true)) as Node).id;
+      saved = true;
+    }
+  } catch (err) {
+    // What was typed goes in the message: the editor is about to go, and with it the text.
+    // Refused (the node was deleted elsewhere, say), a network failure or a non-JSON body alike.
+    alert(`保存できませんでした (${err instanceof Error ? err.message : err}): ${text}`);
   }
-  await refresh(true);
+  // Redrawn from the last state known if the server cannot be reached, so the editor still goes.
+  // After a save that worked, that state is older than the save; say so, or it looks lost.
+  await refresh(true).catch(() => {
+    if (saved) alert(`「${text}」は保存しました。表示の更新に失敗したので、つながり次第更新します。`);
+    if (state) render(state);
+  });
 }
 
 function open(kind: Editing['kind']): void {
   if (!state) return;
   const hit = find(state.doc.root, selected);
   if (!hit) return;
-  // The root has no siblings; Enter on it adds a child, as in XMind.
-  editing = kind !== 'child' && kind !== 'rename' && !hit.parent ? { kind: 'child', id: selected } : { kind, id: selected };
+  // The root, and the drilled-down top, show no siblings; Enter on them adds a child, as in XMind.
+  const top = !hit.parent || selected === drilled;
+  editing = kind !== 'child' && kind !== 'rename' && top ? { kind: 'child', id: selected } : { kind, id: selected };
 
   renderMap(state);
   // Focused synchronously: keys typed right after Tab would otherwise land nowhere.
@@ -344,58 +425,94 @@ function open(kind: Editing['kind']): void {
   }
 }
 
-/** XMind's keys, active while focus is on the map rather than in a text field. */
+/** The selected node and where it sits, as the key actions see it. */
+type Here = { n: Node; parent: Node | undefined; siblings: Node[]; i: number; isTop: boolean };
+
+// Not on the drilled-down top: it shows its children whatever the flag says, so a fold there
+// would change the saved map with nothing moving on screen.
+const fold = (n: Node, collapsed: boolean, isTop: boolean) =>
+  n.children.length && !(isTop && n !== state?.doc.root) && void act('PATCH', `/api/nodes/${n.id}`, { collapsed });
+
+/**
+ * Every key eda handles on the map (XMind's where XMind has one). The handler and the key
+ * sheet both read this table, so the sheet lists exactly the keys the handler takes
+ * (whether each action works is not something the table can promise).
+ * Combos are written as `combo()` builds them.
+ */
+const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
+  { combos: ['Tab'], what: '子ノードを追加', run: () => open('child') },
+  { combos: ['Enter'], what: '後ろに兄弟ノードを追加', run: () => open('after') },
+  { combos: ['Shift+Enter'], what: '前に兄弟ノードを追加', run: () => open('before') },
+  { combos: ['F2', 'Space'], what: '本文を編集', run: () => open('rename') },
+  {
+    combos: ['Delete', 'Backspace'],
+    what: 'ノードを削除',
+    // The drilled-down top is the view's root, which XMind does not let you delete either.
+    run: ({ n, parent, isTop }) => {
+      if (!parent || isTop || (n.children.length && !confirm(`「${n.text}」と子ノード ${n.children.length} 件を消しますか`))) return;
+      selected = parent.id;
+      // The catch is on the DELETE alone: a refresh failing after a delete that worked is not a failed delete.
+      api('DELETE', `/api/nodes/${n.id}`).then(
+        () => refresh(true).catch(() => {}),
+        (err) => {
+          // A refusal was alerted by api(); a network failure was not. The node is still there.
+          if (!(err instanceof Refused)) alert(`削除できませんでした (${err instanceof Error ? err.message : err})`);
+          // Back on it, unless the person has moved on while the request was out.
+          if (selected === parent.id) selected = n.id;
+          if (state) render(state);
+        },
+      );
+    },
+  },
+  // The drilled-down top has a parent, but it is not on screen.
+  { combos: ['ArrowLeft'], what: '親へ', run: ({ parent, isTop }) => parent && !isTop && select(parent.id) },
+  { combos: ['ArrowRight'], what: '最初の子へ', run: ({ n, isTop }) => (!n.collapsed || (isTop && n !== state?.doc.root)) && n.children[0] && select(n.children[0].id) },
+  { combos: ['ArrowUp'], what: '前の兄弟へ', run: ({ siblings, i }) => siblings[i - 1] && select(siblings[i - 1]!.id) },
+  { combos: ['ArrowDown'], what: '次の兄弟へ', run: ({ siblings, i }) => siblings[i + 1] && select(siblings[i + 1]!.id) },
+  { combos: ['+', '='], what: '展開', run: ({ n, isTop }) => fold(n, false, isTop) },
+  { combos: ['-'], what: '折りたたむ', run: ({ n, isTop }) => fold(n, true, isTop) },
+  { combos: ['F6'], what: 'このノードに絞って表示 (ドリルダウン)', run: ({ n }) => n.children.length && drill(n.id) },
+  { combos: ['Shift+F6'], what: '1 段上に戻る (ドリルアップ)', run: () => state && drill(find(state.doc.root, drilled)?.parent?.id ?? state.doc.root.id, false) },
+  { combos: ['Ctrl+=', 'Ctrl++'], what: '拡大', run: () => setZoom(zoom + 0.1) },
+  { combos: ['Ctrl+-'], what: '縮小', run: () => setZoom(zoom - 0.1) },
+  { combos: ['Ctrl+0'], what: '等倍', run: () => setZoom(1) },
+  { combos: ['?'], what: 'このキー一覧', run: () => showKeys() },
+];
+
+/** The key sheet: a native dialog, so Esc and focus trapping come from the browser. */
+function showKeys(): void {
+  const d = $('keys') as HTMLDialogElement;
+  if (!d.childElementCount) {
+    d.append(
+      h('h2', {}, 'キー (マップにフォーカスがあるとき)'),
+      h('table', {}, ...KEYS.map((k) => h('tr', {}, h('td', {}, ...k.combos.flatMap((c, j) => [j ? ' / ' : '', h('kbd', {}, show(c))])), h('td', {}, k.what)))),
+      h('p', { class: 'small' }, '提案ノード (点線の枠) はクリックで採用、横の ✕ で却下。'),
+      h('form', { method: 'dialog' }, h('button', {}, '閉じる')),
+    );
+  }
+  // The header is rebuilt on every change, so the button that opened the sheet may be gone
+  // by the time it closes; focus goes back to its replacement.
+  const opener = document.activeElement?.closest('header') ? document.activeElement.getAttribute('data-key') : null;
+  d.addEventListener('close', () => opener && document.querySelector<HTMLElement>(`header [data-key="${CSS.escape(opener)}"]`)?.focus(), { once: true });
+  d.showModal();
+}
+
 document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
-  // Only the map's own selection: not a focused ghost / fold / reject button (their Enter
-  // and Space are theirs), not a text field, not the sidebar, and no modified keys other
-  // than Shift+Enter (Shift+Tab, Ctrl+- and the like belong to the browser).
-  if (editing || !state || t.closest('input, textarea, aside, .ghost, .fold')) return;
-  if (e.ctrlKey || e.metaKey || e.altKey || (e.shiftKey && e.key !== 'Enter' && e.key !== '+')) return;
+  // Only the map's own selection: not a focused ghost / fold / toolbar button (their Enter
+  // and Space are theirs), not a text field, not the sidebar or the key sheet. Keys not in
+  // the table (Shift+Tab, Ctrl+W and the like) stay the browser's.
+  if (editing || !state || t.closest('input, textarea, aside, header, dialog, .ghost, .fold')) return;
+  // A refresh can blur the sheet's own button and drop focus on the body while it is still open.
+  if ((document.getElementById('keys') as HTMLDialogElement | null)?.open) return;
+  const key = KEYS.find((k) => k.combos.includes(combo(e)));
+
   const hit = find(state.doc.root, selected);
-  if (!hit) return;
-  const { node: n, parent } = hit;
-  const siblings = parent?.children ?? [n];
-  const i = siblings.findIndex((c) => c.id === n.id);
-  const go = (id: string | undefined) => {
-    e.preventDefault();
-    if (id) select(id);
-  };
-  switch (e.key) {
-    case 'Tab':
-      e.preventDefault();
-      return open('child');
-    case 'Enter':
-      e.preventDefault();
-      return open(e.shiftKey ? 'before' : 'after');
-    case 'F2':
-    case ' ':
-      e.preventDefault();
-      return open('rename');
-    case 'Delete':
-    case 'Backspace':
-      if (!parent) return;
-      e.preventDefault();
-      if (n.children.length && !confirm(`「${n.text}」と子ノード ${n.children.length} 件を消しますか`)) return;
-      selected = parent.id;
-      void act('DELETE', `/api/nodes/${n.id}`);
-      return;
-    case 'ArrowLeft':
-      return go(parent?.id);
-    case 'ArrowRight':
-      return go(n.collapsed ? undefined : n.children[0]?.id);
-    case 'ArrowUp':
-      return go(siblings[i - 1]?.id);
-    case 'ArrowDown':
-      return go(siblings[i + 1]?.id);
-    case '+':
-    case '=':
-    case '-':
-      if (!n.children.length) return;
-      e.preventDefault();
-      void act('PATCH', `/api/nodes/${n.id}`, { collapsed: e.key === '-' });
-      return;
-  }
+  if (!key || !hit) return;
+  e.preventDefault();
+  const isTop = selected === drilled;
+  const siblings = isTop || !hit.parent ? [hit.node] : hit.parent.children;
+  key.run({ n: hit.node, parent: hit.parent, siblings, i: siblings.findIndex((c) => c.id === selected), isTop });
 });
 
 /** Adopt or reject from the map. Both buttons go dead on the first click: a second would 404. */
@@ -406,3 +523,22 @@ function decide(e: Event, id: string, what: 'accept' | 'reject'): void {
     for (const b of li?.querySelectorAll('button') ?? []) b.disabled = false;
   });
 }
+
+/**
+ * The selection follows keyboard focus (Tab from the header, Shift+Tab from the sidebar), so the
+ * highlighted node is always the one the keys act on. Updated in place: redrawing the map would
+ * take away the button that just received focus.
+ */
+document.addEventListener('focusin', (e) => {
+  const box = (e.target as HTMLElement).closest?.<HTMLElement>('.node[data-id]');
+  const id = box?.dataset['id'];
+  if (!box || !id || id === selected || !state) return;
+  selected = id;
+  for (const x of document.querySelectorAll('.node.sel')) {
+    x.classList.remove('sel');
+    x.setAttribute('aria-pressed', 'false');
+  }
+  box.classList.add('sel');
+  box.setAttribute('aria-pressed', 'true');
+  render(state, false);
+});
