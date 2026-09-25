@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { Node } from '../src/map.ts';
-import { clampZoom, pathTo, topicColour, visibleSelection } from '../web/view.ts';
+import { clampZoom, pathTo, topicColours, visibleSelection } from '../web/view.ts';
 
 const n = (id: string, children: Node[] = [], collapsed = false): Node => ({ id, text: id, children, urls: [], tasks: [], origin: { by: 'human' }, ...(collapsed ? { collapsed } : {}) });
 
@@ -29,12 +29,19 @@ test('a drilled-down collapsed top still shows its children', () => {
   const top = map.children[0]!;
   expect(visibleSelection(top, 'n3', true)).toBe('n3');
   expect(visibleSelection(top, 'n3')).toBe('n2');
+  // Only the top's own flag is skipped: a collapsed node below it still hides its subtree.
+  expect(visibleSelection(map, 'n4', true)).toBe('n2');
 });
 
-test('topic colour follows the id, not the position', () => {
-  expect(topicColour('n7')).toBe(1);
-  expect(topicColour('n12')).toBe(0);
-  expect([2, 3, 4, 5, 6, 7].map((i) => topicColour(`n${i}`))).toEqual([2, 3, 4, 5, 0, 1]);
+test('topic colours follow creation order, not position, and differ for the first six', () => {
+  const c = topicColours(['n30', 'n4', 'n17']);
+  expect([c.get('n4'), c.get('n17'), c.get('n30')]).toEqual([0, 1, 2]);
+  // An insert before the others, created later, takes the next colour and moves none.
+  const after = topicColours(['n31', 'n30', 'n4', 'n17']);
+  expect([after.get('n4'), after.get('n17'), after.get('n30'), after.get('n31')]).toEqual([0, 1, 2, 3]);
+  // n9 sorts before n10 as a number, not as a string.
+  expect(topicColours(['n10', 'n9']).get('n9')).toBe(0);
+  expect(new Set(topicColours(['n2', 'n5', 'n8', 'n11', 'n14', 'n20']).values()).size).toBe(6);
 });
 
 test('zoom is clamped and rounded, and junk falls back to 1', () => {

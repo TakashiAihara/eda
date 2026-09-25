@@ -8,7 +8,7 @@
   --ai: #7a4fb0;
   --ghost: #b7791f;
   --danger: #c92a2a;
-  /* main-branch colours, picked by a top-level branch's index mod 6 */
+  /* main-topic colours, by the topic's creation rank mod 6 (topicColours in web/view.ts) */
   --b0: #d9480f;
   --b1: #1971c2;
   --b2: #2f9e44;
@@ -75,8 +75,7 @@ a { color: var(--accent); word-break: break-all; }
 .tree ul > li:first-child::after { top: 50%; border-top-left-radius: 8px; }
 .tree ul > li:last-child::after { bottom: 50%; border-bottom-left-radius: 8px; }
 .tree ul > li:only-child::after { display: none; }
-/* the root's own line to its column has no branch; its children's bracket takes theirs */
-.tree > li > ul::before { border-color: var(--line); }
+
 
 .node { font: inherit; color: inherit; text-align: left; background: var(--card); border: 1.5px solid var(--edge); border-radius: 8px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; display: inline-flex; align-items: center; gap: 5px; }
 .node .text { overflow: hidden; text-overflow: ellipsis; }
@@ -86,8 +85,9 @@ a { color: var(--accent); word-break: break-all; }
 .node .tag { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 1px; }
 .node .tag.ai { color: var(--ai); }
 .node.root .tag { color: inherit; }
-.node.ghost { border-style: dashed; border-color: var(--ghost); color: var(--muted); opacity: 0.7; }
-.node.ghost:hover { opacity: 1; color: var(--fg); }
+/* told apart by the dashed border and muted text; no opacity, which took the text under 3:1 */
+.node.ghost { border-style: dashed; border-color: var(--ghost); color: var(--muted); background: transparent; }
+.node.ghost:hover { color: var(--fg); background: var(--card); }
 .node.pending-edit { box-shadow: 0 0 0 3px var(--ghost); }
 .fold { margin-left: 4px; font-size: 11px; line-height: 1; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; border-color: var(--edge); color: var(--fg); display: inline-flex; align-items: center; justify-content: center; }
 /* the root's fold has no branch colour, and --line is 1.7:1: too faint for a control */

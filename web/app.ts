@@ -1,7 +1,7 @@
 import { find, kaneoTaskUrl, type MapDoc, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
 import { icon } from './icons.ts';
 import { combo, show } from './keys.ts';
-import { clampZoom, pathTo, topicColour, visibleSelection } from './view.ts';
+import { clampZoom, pathTo, topicColours, visibleSelection } from './view.ts';
 
 type State = { rev: number; dir: string; doc: MapDoc; kaneoHost: string | null };
 
@@ -91,11 +91,13 @@ function renderHead(s: State): void {
     h('h1', {}, s.doc.root.text),
     // Drilled down: the way back up, each step clickable.
     ...(crumbs.length > 1
-      ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', click: (e) => (e.preventDefault(), drill(n.id)) }, n.text)]))]
+      ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', click: (e) => (e.preventDefault(), drill(n.id, false)) }, n.text)]))]
       : []),
     h('span', { class: 'meta', title: s.dir }, s.dir.split('/').pop() ?? s.dir),
     ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `${x.cwd ? `cd ${x.cwd} && ` : ''}claude --resume ${x.id}`))),
-    h('span', { class: 'tools' },
+    // A mouse click does not move focus here, so the map keeps its keys after a zoom click;
+    // reaching the buttons with Tab still focuses them.
+    h('span', { class: 'tools', mousedown: (e) => e.preventDefault() },
       h('button', { class: 'icon-btn', title: '縮小 (Ctrl+-)', 'aria-label': '縮小', click: () => setZoom(zoom - 0.1) }, icon('minus')),
       h('button', { class: 'zoom', title: '等倍に戻す (Ctrl+0)', click: () => setZoom(1) }, `${Math.round(zoom * 100)}%`),
       h('button', { class: 'icon-btn', title: '拡大 (Ctrl+=)', 'aria-label': '拡大', click: () => setZoom(zoom + 0.1) }, icon('plus')),
@@ -114,8 +116,9 @@ function setZoom(z: number): void {
 }
 
 /**
- * Drilling down selects the new top, as XMind does. Drilling up keeps the selection: it is
- * still on screen, and moving it would make Shift+F6 at the top level a jump to the root.
+ * Drilling down selects the new top, as XMind does. Drilling up leaves the selection where it
+ * was (the render moves it only if a collapsed node now hides it); selecting the new top
+ * instead would make Shift+F6 at the top level a jump to the root.
  */
 function drill(id: string, select = true): void {
   drilled = id;
@@ -142,7 +145,7 @@ function renderMap(s: State): void {
       .map((x) =>
         h('li', {},
           // Clicking the ghost adopts it as written; rewriting first is the card in the sidebar.
-          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: (e) => decide(e, x.id, 'accept') }, x.text),
+          h('button', { type: 'button', class: 'node ghost', title: `${x.reason}\nクリックで採用`, 'aria-label': `提案「${x.text}」を採用`, click: (e) => decide(e, x.id, 'accept') }, h('span', { class: 'text' }, x.text)),
           h('button', { type: 'button', class: 'fold reject', title: '却下', 'aria-label': `提案「${x.text}」を却下`, click: (e) => decide(e, x.id, 'reject') }, icon('close')),
         ),
       );
@@ -150,6 +153,7 @@ function renderMap(s: State): void {
   const tag = (name: 'link' | 'task' | 'note', count: number, label: string) =>
     count ? h('span', { class: 'tag', title: label, role: 'img', 'aria-label': label }, icon(name), count > 1 ? String(count) : '') : null;
 
+  const colours = topicColours(top.children.map((c) => c.id));
   const item = (n: Node, depth = 0): HTMLElement => {
     const shown = n.collapsed && !(depth === 0 && drilledIn) ? [] : n.children;
     const cls = ['node', depth === 0 ? 'root' : depth === 1 ? 'topic' : '', n.id === selected ? 'sel' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
@@ -159,14 +163,14 @@ function renderMap(s: State): void {
       editing?.kind === 'rename' && editing.id === n.id
         ? editor(n.text)
         : h('button', { type: 'button', class: cls, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) },
-            n.origin.by === 'ai' ? h('span', { class: 'tag ai', role: 'img', 'aria-label': 'AI の提案' }, icon('ai')) : null,
+            n.origin.by === 'ai' ? h('span', { class: 'tag ai', role: 'img', 'aria-label': 'AI の提案から採用' }, icon('ai')) : null,
             h('span', { class: 'text' }, n.text),
             tag('link', n.urls.length, `URL ${n.urls.length} 件`),
             tag('task', n.tasks.length, `kaneo タスク ${n.tasks.length} 件`),
             tag('note', n.note ? 1 : 0, 'ノートあり'),
           );
     // A main topic's colour, inherited by everything under it.
-    const li = h('li', depth === 1 ? { style: `--branch: var(--b${topicColour(n.id)})` } : {}, box);
+    const li = h('li', depth === 1 ? { style: `--branch: var(--b${colours.get(n.id) ?? 0})` } : {}, box);
     if (n.children.length && !(depth === 0 && drilledIn)) {
       li.append(
         h('button', { class: 'fold', title: n.collapsed ? '展開 (+)' : '折りたたむ (-)', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) },
@@ -187,7 +191,7 @@ function renderMap(s: State): void {
   $('map').replaceChildren(
     h('ul', { class: 'tree', style: `zoom: ${zoom}` }, item(top)),
     // An empty map gives no clue where to start; XMind's first topic is one Tab away.
-    ...(top.children.length || editing ? [] : [h('p', { class: 'hint' }, 'Tab で子ノードを追加。? でキー一覧。')]),
+    ...(top.children.length || editing || drilledIn || s.doc.suggestions.length ? [] : [h('p', { class: 'hint' }, 'Tab で子ノードを追加。? でキー一覧。')]),
   );
 }
 
@@ -220,7 +224,8 @@ function renderNode(s: State): void {
           ),
           h('input', { placeholder: 'kaneo のタスク URL を貼ってリンク (Enter)', 'data-draft': `${n.id}:task`, keydown: onEnter((v, k) => act('POST', `${base}/tasks`, { url: v }, [k, v])) }),
         ]),
-    ...(hit.parent ? [h('div', { class: 'row' }, h('button', { class: 'danger', click: () => confirm(`「${n.text}」と子ノードを消しますか`) && act('DELETE', base) }, 'このノードを削除'))] : []),
+    // Not the drilled-down top either, as with the keyboard: it is the view's root.
+    ...(hit.parent && n.id !== drilled ? [h('div', { class: 'row' }, h('button', { class: 'danger', click: () => confirm(`「${n.text}」と子ノードを消しますか`) && act('DELETE', base) }, 'このノードを削除'))] : []),
   );
 }
 
@@ -395,7 +400,10 @@ function open(kind: Editing['kind']): void {
 /** The selected node and where it sits, as the key actions see it. */
 type Here = { n: Node; parent: Node | undefined; siblings: Node[]; i: number; isTop: boolean };
 
-const fold = (n: Node, collapsed: boolean) => n.children.length && void act('PATCH', `/api/nodes/${n.id}`, { collapsed });
+// Not on the drilled-down top: it shows its children whatever the flag says, so a fold there
+// would change the saved map with nothing moving on screen.
+const fold = (n: Node, collapsed: boolean, isTop: boolean) =>
+  n.children.length && !(isTop && n !== state?.doc.root) && void act('PATCH', `/api/nodes/${n.id}`, { collapsed });
 
 /**
  * Every key eda handles on the map (XMind's where XMind has one). The handler and the key
@@ -423,8 +431,8 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
   { combos: ['ArrowRight'], what: '最初の子へ', run: ({ n, isTop }) => (!n.collapsed || (isTop && n !== state?.doc.root)) && n.children[0] && select(n.children[0].id) },
   { combos: ['ArrowUp'], what: '前の兄弟へ', run: ({ siblings, i }) => siblings[i - 1] && select(siblings[i - 1]!.id) },
   { combos: ['ArrowDown'], what: '次の兄弟へ', run: ({ siblings, i }) => siblings[i + 1] && select(siblings[i + 1]!.id) },
-  { combos: ['+', '='], what: '展開', run: ({ n }) => fold(n, false) },
-  { combos: ['-'], what: '折りたたむ', run: ({ n }) => fold(n, true) },
+  { combos: ['+', '='], what: '展開', run: ({ n, isTop }) => fold(n, false, isTop) },
+  { combos: ['-'], what: '折りたたむ', run: ({ n, isTop }) => fold(n, true, isTop) },
   { combos: ['F6'], what: 'このノードに絞って表示 (ドリルダウン)', run: ({ n }) => drill(n.id) },
   { combos: ['Shift+F6'], what: '1 段上に戻る (ドリルアップ)', run: () => state && drill(find(state.doc.root, drilled)?.parent?.id ?? state.doc.root.id, false) },
   { combos: ['Ctrl+=', 'Ctrl++'], what: '拡大', run: () => setZoom(zoom + 0.1) },

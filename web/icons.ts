@@ -2,8 +2,9 @@
  * The few icons eda draws, as inline SVG paths on a 24-unit grid. Inline rather than an
  * icon package: eight shapes do not justify a dependency.
  *
- * All but `ai` are paths from Lucide (https://lucide.dev): ISC, and MIT for the ones Lucide
- * took from Feather (link, plus, minus, x). The notices are in `ICONS-LICENSE` next to this file.
+ * `ai` is eda's own. `keys` is drawn after Lucide's keyboard (ISC). The rest are Lucide paths
+ * that Lucide carries from Feather (MIT): link, check-square, file-text, plus, minus, x.
+ * Both notices are in `ICONS-LICENSE` next to this file.
  */
 const paths = {
   link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',

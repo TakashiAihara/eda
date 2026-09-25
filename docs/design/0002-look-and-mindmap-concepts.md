@@ -1,6 +1,6 @@
 # Look, icons, keys, and what to take from XMind / MindMeister
 
-Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decisions (judgment queue D-01..D-03).
+Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decisions: which markers to store, whether collapse-to-level is saved, whether relationships and boundaries come in at all.
 
 ## Background
 
@@ -17,7 +17,7 @@ Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decision
 
 | Concept | XMind / MindMeister | eda | Needs a new field |
 |---|---|---|---|
-| Branch colour | each main topic gets a colour its subtree inherits | slice 1 | no (derived from the topic's id) |
+| Branch colour | each main topic gets a colour its subtree inherits | slice 1 | no (derived from the topics' creation order) |
 | Root as a distinct shape | filled central topic | slice 1 | no |
 | Icons instead of text marks | markers / icons | slice 1 for eda's own marks (link, task, note, fold) | no |
 | Key sheet | XMind's shortcut list (Help menu) | slice 1, `?` | no |
@@ -31,11 +31,11 @@ Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decision
 
 ## Slice 1 details
 
-- Topic colour: a main topic (a child of the drawn root, the map's root or the drilled-down node) takes palette colour `id mod 6` from the number in its id; its connectors and node borders use it. From the id rather than the position, so adding or removing a topic does not recolour the others. Neighbours can share a colour (1 in 6); storing a colour per node is the upgrade if that matters. The palette has light and dark values.
+- Topic colour: a main topic (a child of the drawn root, the map's root or the drilled-down node) takes palette colour `rank mod 6`, where rank orders the topics by the number in their ids (creation order); its connectors and node borders use it. Not the position, which recolours every later topic on an insert; not the raw id, whose sequence is shared with suggestions and chat, so colours would repeat at random (4 topics: 72% chance two match). By rank, the first six always differ and an insert recolours nothing; deleting a topic shifts the ones created after it. Storing a colour per node is the upgrade if that matters. The palette has light and dark values.
 - Provenance moves from a coloured border to a ✦ icon, since border colour now means the branch.
 - The root is a filled pill in the accent colour.
-- Icons are inline SVG paths in `web/icons.ts` (no icon package): link, task, note, AI, plus, minus, close, keyboard. All but AI are Lucide's; the licence is `web/ICONS-LICENSE`. A favicon is an inline SVG data URL.
+- Icons are inline SVG paths in `web/icons.ts` (no icon package): link, task, note, AI, plus, minus, close, keyboard. All but AI come from Lucide (most of them Feather's originally); both licences are in `web/ICONS-LICENSE`. A favicon is an inline SVG data URL.
 - Drill-down shows the selected node as the root of the view, with its children even when it is collapsed. It is not stored: a reload shows the whole map. `Shift+F6` or the breadcrumb goes back up. The drilled-down top cannot be deleted from the keyboard, like the root. Suggestions outside the drilled branch are not drawn on the map; the sidebar's candidate list still shows every one.
-- Zoom is a CSS `zoom` on the tree, kept in `localStorage`, which is per origin: `eda serve --port 0` gets a new port, so a new zoom, each run. Ctrl+= / Ctrl+- / Ctrl+0 zoom the map only while focus is on the map; elsewhere they stay the browser's page zoom.
+- Zoom is a CSS `zoom` on the tree, kept in `localStorage`, which is per origin: `eda serve --port 0` gets a new port, so a new zoom, each run. Ctrl+= / Ctrl+- / Ctrl+0 zoom the map only while focus is on the map (which is most of the time); elsewhere they stay the browser's page zoom. Page zoom stays reachable through the browser menu and Ctrl+wheel.
 - The key sheet is generated from the table the key handler reads, so it lists exactly the keys the map takes. The README's key table is a hand-kept copy.
 - Narrow screens (720px and below) stack the sidebar under the map instead of a 380px column beside it. The header shows the map directory's last segment; the full path is its tooltip.

@@ -25,14 +25,15 @@ export function visibleSelection(top: Node, id: string, topShowsChildren = false
 }
 
 /**
- * Palette slot of a main topic, from its id rather than its position: inserting or deleting
- * a sibling would otherwise recolour every topic after it. Ids are `n<seq>`, so topics added
- * one after another take consecutive colours.
- * ponytail: neighbours can share a colour (1 in 6); store a colour on the node if that bites.
+ * Palette slot of each main topic: its rank by creation (the number in its `n<seq>` id), mod 6.
+ * Not the position, which recolours every later topic when one is inserted before them; not
+ * the raw id, whose sequence is shared with suggestions and chat, so colours would repeat at
+ * random. By rank, the first six topics always differ and an insert anywhere recolours nothing.
+ * ponytail: deleting a topic still shifts the ones created after it; store a colour per node if that bites.
  */
-export function topicColour(id: string): number {
-  const n = Number(id.replace(/\D/g, ''));
-  return Number.isFinite(n) ? n % 6 : 0;
+export function topicColours(ids: string[]): Map<string, number> {
+  const seq = (id: string): number => Number(id.replace(/\D/g, ''));
+  return new Map([...ids].sort((a, b) => seq(a) - seq(b)).map((id, i) => [id, i % 6]));
 }
 
 export const clampZoom = (z: number): number => Math.min(2, Math.max(0.5, Math.round((Number.isFinite(z) ? z : 1) * 10) / 10));
