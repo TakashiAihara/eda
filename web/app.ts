@@ -376,17 +376,21 @@ async function commit(text: string): Promise<void> {
   const e = editing;
   if (!e || !state || text === '') return close();
   editing = null;
+  let saved = false;
   try {
     if (e.kind === 'rename') {
       await api('PATCH', `/api/nodes/${e.id}`, { text }, true);
+      saved = true;
     } else if (e.kind === 'child') {
       selected = ((await api('POST', '/api/nodes', { parentId: e.id, text }, true)) as Node).id;
+      saved = true;
     } else {
       const hit = find(state.doc.root, e.id);
       // The node Enter was pressed on is gone (deleted elsewhere): nowhere to put it.
       if (!hit?.parent) throw new Error('隣のノードが削除されました');
       const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
       selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at }, true)) as Node).id;
+      saved = true;
     }
   } catch (err) {
     // What was typed goes in the message: the editor is about to go, and with it the text.
@@ -394,7 +398,11 @@ async function commit(text: string): Promise<void> {
     alert(`保存できませんでした (${err instanceof Error ? err.message : err}): ${text}`);
   }
   // Redrawn from the last state known if the server cannot be reached, so the editor still goes.
-  await refresh(true).catch(() => state && render(state));
+  // After a save that worked, that state is older than the save; say so, or it looks lost.
+  await refresh(true).catch(() => {
+    if (saved) alert(`「${text}」は保存しました。表示の更新に失敗したので、つながり次第更新します。`);
+    if (state) render(state);
+  });
 }
 
 function open(kind: Editing['kind']): void {
