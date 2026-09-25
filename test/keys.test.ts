@@ -14,11 +14,11 @@ test('named keys carry Shift, characters do not', () => {
 test('Cmd counts as Ctrl, Alt is kept, Space is named', () => {
   expect(k('=', { metaKey: true })).toBe('Ctrl+=');
   expect(k('-', { ctrlKey: true })).toBe('Ctrl+-');
-  expect(k('Tab', { altKey: true })).toBe('Alt+Tab');
+  expect(k('Enter', { altKey: true })).toBe('Alt+Enter');
   expect(k(' ')).toBe('Space');
 });
 
 test('arrows are shown as arrows', () => {
-  expect(show('ArrowLeft')).toBe('←');
+  expect(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].map(show)).toEqual(['←', '→', '↑', '↓']);
   expect(show('Shift+F6')).toBe('Shift+F6');
 });

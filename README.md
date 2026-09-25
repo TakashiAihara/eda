@@ -41,12 +41,12 @@ Inside the session, say what you want to think about; the session runs `eda serv
 | F2 / Space | edit the node's text |
 | Delete / Backspace | delete the node |
 | ← → ↑ ↓ | parent / first child / previous / next sibling |
-| + / - | expand / collapse |
+| + (or =) / - | expand / collapse |
 | F6 / Shift+F6 | drill down to the node / back up one level (view only, not saved) |
-| Ctrl+= / Ctrl+- / Ctrl+0 | zoom in / out / reset (also the buttons at the top right) |
+| Ctrl+= (or Ctrl++) / Ctrl+- / Ctrl+0 | zoom the map in / out / reset (also the buttons at the top right; Cmd on macOS) |
 | ? | the key sheet |
 
-Suggested nodes appear translucent: click to adopt, ✕ to reject. Each branch off the root gets its own colour; nodes adopted from an AI suggestion carry a ✦ mark.
+Suggested nodes appear translucent: click to adopt, ✕ to reject. Each main topic (a child of the root) gets its own colour, kept when topics are added or removed; nodes adopted from an AI suggestion carry a ✦ mark.
 
 ## Files
 

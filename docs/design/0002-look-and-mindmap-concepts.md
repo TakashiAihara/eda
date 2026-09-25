@@ -1,6 +1,6 @@
 # Look, icons, keys, and what to take from XMind / MindMeister
 
-Status: slice 1 implemented in this PR. Slices 2 and 3 wait on the owner's decisions (judgment queue D-01..D-03).
+Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decisions (judgment queue D-01..D-03).
 
 ## Background
 
@@ -17,10 +17,10 @@ Status: slice 1 implemented in this PR. Slices 2 and 3 wait on the owner's decis
 
 | Concept | XMind / MindMeister | eda | Needs a new field |
 |---|---|---|---|
-| Branch colour | each main branch gets a colour its subtree inherits | slice 1 | no (derived from the top-level index) |
+| Branch colour | each main topic gets a colour its subtree inherits | slice 1 | no (derived from the topic's id) |
 | Root as a distinct shape | filled central topic | slice 1 | no |
 | Icons instead of text marks | markers / icons | slice 1 for eda's own marks (link, task, note, fold) | no |
-| Key sheet | XMind `Ctrl+/` shortcut list | slice 1, `?` | no |
+| Key sheet | XMind's shortcut list (Help menu) | slice 1, `?` | no |
 | Drill down / up | XMind `F6` / `Shift+F6` | slice 1, view only | no |
 | Zoom | both | slice 1, `Ctrl+=` / `Ctrl+-` / `Ctrl+0` on the map | no |
 | Markers (priority, progress, flag) | XMind markers, MindMeister task status | slice 2 | yes (D-01) |
@@ -31,10 +31,11 @@ Status: slice 1 implemented in this PR. Slices 2 and 3 wait on the owner's decis
 
 ## Slice 1 details
 
-- Branch colour: the n-th child of the drawn root (the map's root, or the drilled-down node) takes palette colour `n mod 6`; its connectors and node borders use it. The palette has light and dark values. Colours are recomputed when drilling down, so they follow position, not identity.
+- Topic colour: a main topic (a child of the drawn root, the map's root or the drilled-down node) takes palette colour `id mod 6` from the number in its id; its connectors and node borders use it. From the id rather than the position, so adding or removing a topic does not recolour the others. Neighbours can share a colour (1 in 6); storing a colour per node is the upgrade if that matters. The palette has light and dark values.
 - Provenance moves from a coloured border to a ✦ icon, since border colour now means the branch.
 - The root is a filled pill in the accent colour.
-- Icons are a handful of inline SVG paths in `web/icons.ts` (no icon package): link, task, note, AI, expand, collapse, close. A favicon is an inline SVG data URL.
-- Drill-down shows the selected node as the root of the view. It is not stored: a reload shows the whole map. `Shift+F6` or the breadcrumb goes back up.
-- Zoom is a CSS `zoom` on the tree, kept per browser in `localStorage`.
-- The key sheet lists every key eda handles; it is generated from the same table the key handler reads, so the two cannot drift.
+- Icons are inline SVG paths in `web/icons.ts` (no icon package): link, task, note, AI, plus, minus, close, keyboard. All but AI are Lucide's; the licence is `web/ICONS-LICENSE`. A favicon is an inline SVG data URL.
+- Drill-down shows the selected node as the root of the view, with its children even when it is collapsed. It is not stored: a reload shows the whole map. `Shift+F6` or the breadcrumb goes back up. The drilled-down top cannot be deleted from the keyboard, like the root. Suggestions outside the drilled branch are not drawn on the map; the sidebar's candidate list still shows every one.
+- Zoom is a CSS `zoom` on the tree, kept in `localStorage`, which is per origin: `eda serve --port 0` gets a new port, so a new zoom, each run. Ctrl+= / Ctrl+- / Ctrl+0 zoom the map only while focus is on the map; elsewhere they stay the browser's page zoom.
+- The key sheet is generated from the table the key handler reads, so it lists exactly the keys the map takes. The README's key table is a hand-kept copy.
+- Narrow screens (720px and below) stack the sidebar under the map instead of a 380px column beside it. The header shows the map directory's last segment; the full path is its tooltip.

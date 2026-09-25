@@ -81,7 +81,7 @@ a { color: var(--accent); word-break: break-all; }
 .node { font: inherit; color: inherit; text-align: left; background: var(--card); border: 1.5px solid var(--edge); border-radius: 8px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; display: inline-flex; align-items: center; gap: 5px; }
 .node .text { overflow: hidden; text-overflow: ellipsis; }
 .node.root { font-weight: 700; font-size: 16px; padding: 8px 20px; border-radius: 999px; background: var(--accent); border-color: var(--accent); color: var(--bg); }
-.node.main { font-weight: 600; font-size: 15px; padding: 5px 14px; border-width: 2px; background: color-mix(in srgb, var(--edge) 12%, var(--card)); }
+.node.topic { font-weight: 600; font-size: 15px; padding: 5px 14px; border-width: 2px; background: color-mix(in srgb, var(--edge) 12%, var(--card)); }
 .node.sel { outline: 2.5px solid var(--fg); outline-offset: 2px; }
 .node .tag { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 1px; }
 .node .tag.ai { color: var(--ai); }
@@ -89,7 +89,9 @@ a { color: var(--accent); word-break: break-all; }
 .node.ghost { border-style: dashed; border-color: var(--ghost); color: var(--muted); opacity: 0.7; }
 .node.ghost:hover { opacity: 1; color: var(--fg); }
 .node.pending-edit { box-shadow: 0 0 0 3px var(--ghost); }
-.fold { margin-left: 4px; font-size: 11px; line-height: 1; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; border-color: var(--edge); color: var(--edge); display: inline-flex; align-items: center; justify-content: center; }
+.fold { margin-left: 4px; font-size: 11px; line-height: 1; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; border-color: var(--edge); color: var(--fg); display: inline-flex; align-items: center; justify-content: center; }
+/* the root's fold has no branch colour, and --line is 1.7:1: too faint for a control */
+.tree > li > .fold { border-color: var(--muted); }
 /* rejecting a suggestion is not folding a branch: it takes the suggestion's colour */
 .fold.reject { border-color: var(--ghost); color: var(--ghost); }
 .node.edit { width: 16em; cursor: text; outline: 2px solid var(--accent); }
@@ -107,10 +109,9 @@ a { color: var(--accent); word-break: break-all; }
 @media (max-width: 720px) {
   main { grid-template-columns: 1fr; grid-template-rows: minmax(50vh, auto) auto; overflow: auto; }
   aside { border-left: none; border-top: 1px solid var(--line); overflow: visible; }
-  dialog { min-width: 0; width: calc(100vw - 32px); }
 }
 
-dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; min-width: 420px; }
+dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; min-width: min(420px, calc(100vw - 32px)); }
 dialog::backdrop { background: rgb(0 0 0 / 0.35); }
 dialog h2 { font-size: 15px; margin: 0 0 10px; }
 dialog table { border-collapse: collapse; width: 100%; }

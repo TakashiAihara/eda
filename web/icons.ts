@@ -1,6 +1,9 @@
 /**
- * The few icons eda draws, as inline SVG paths on a 24-unit grid (stroke style, after Lucide).
- * Inline rather than an icon package: seven shapes do not justify a dependency.
+ * The few icons eda draws, as inline SVG paths on a 24-unit grid. Inline rather than an
+ * icon package: eight shapes do not justify a dependency.
+ *
+ * All but `ai` are paths from Lucide (https://lucide.dev): ISC, and MIT for the ones Lucide
+ * took from Feather (link, plus, minus, x). The notices are in `ICONS-LICENSE` next to this file.
  */
 const paths = {
   link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
@@ -10,7 +13,6 @@ const paths = {
   plus: 'M12 5v14M5 12h14',
   minus: 'M5 12h14',
   close: 'M18 6 6 18M6 6l12 12',
-  up: 'M12 19V5M5 12l7-7 7 7',
   keys: 'M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8',
 } as const;
 
