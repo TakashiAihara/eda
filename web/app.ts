@@ -90,17 +90,17 @@ function renderHead(s: State): void {
     h('h1', {}, s.doc.root.text),
     // Drilled down: the way back up, each step clickable.
     ...(crumbs.length > 1
-      ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', click: (e) => (e.preventDefault(), drill(n.id, false)) }, n.text)]))]
+      ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', 'data-key': `crumb:${n.id}`, click: (e) => (e.preventDefault(), drill(n.id, false)) }, n.text)]))]
       : []),
     h('span', { class: 'meta', title: s.dir }, s.dir.split('/').pop() ?? s.dir),
     ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `${x.cwd ? `cd ${x.cwd} && ` : ''}claude --resume ${x.id}`))),
     // A mouse click does not move focus here, so the map keeps its keys after a zoom click;
     // reaching the buttons with Tab still focuses them.
     h('span', { class: 'tools', mousedown: (e) => e.preventDefault() },
-      h('button', { class: 'icon-btn', title: '縮小 (Ctrl+-)', 'aria-label': '縮小', click: () => setZoom(zoom - 0.1) }, icon('minus')),
-      h('button', { class: 'zoom', title: '等倍に戻す (Ctrl+0)', click: () => setZoom(1) }, `${Math.round(zoom * 100)}%`),
-      h('button', { class: 'icon-btn', title: '拡大 (Ctrl+=)', 'aria-label': '拡大', click: () => setZoom(zoom + 0.1) }, icon('plus')),
-      h('button', { class: 'icon-btn', title: 'キー一覧 (?)', 'aria-label': 'キー一覧', click: showKeys }, icon('keys')),
+      h('button', { class: 'icon-btn', 'data-key': 'zoom-out', title: '縮小 (Ctrl+-)', 'aria-label': '縮小', click: () => setZoom(zoom - 0.1) }, icon('minus')),
+      h('button', { class: 'zoom', 'data-key': 'zoom-reset', title: '等倍に戻す (Ctrl+0)', click: () => setZoom(1) }, `${Math.round(zoom * 100)}%`),
+      h('button', { class: 'icon-btn', 'data-key': 'zoom-in', title: '拡大 (Ctrl+=)', 'aria-label': '拡大', click: () => setZoom(zoom + 0.1) }, icon('plus')),
+      h('button', { class: 'icon-btn', 'data-key': 'keys', title: 'キー一覧 (?)', 'aria-label': 'キー一覧', click: showKeys }, icon('keys')),
     ),
   );
 }
@@ -302,9 +302,9 @@ function render(s: State, withMap = true): void {
     // Settled before the header, whose breadcrumb reads it.
     viewTop(s);
     // The header is rebuilt on every change; a toolbar button reached with Tab keeps its focus.
-    const focused = document.activeElement?.closest('header') ? document.activeElement?.getAttribute('title') : null;
+    const focused = document.activeElement?.closest('header') ? document.activeElement?.getAttribute('data-key') : null;
     renderHead(s);
-    if (focused) document.querySelector<HTMLElement>(`header [title="${focused}"]`)?.focus();
+    if (focused) document.querySelector<HTMLElement>(`header [data-key="${CSS.escape(focused)}"]`)?.focus();
     renderMap(s);
   }
   const busy = document.activeElement?.closest('aside section')?.id;
@@ -354,7 +354,9 @@ function editor(initial: string): HTMLElement {
   input.addEventListener('blur', () => {
     if (!editing) return;
     editing = null;
-    const later = () => document.contains(input) && state && renderMap(state);
+    // The header too: a change that arrived while editing (the drilled-down node deleted
+    // elsewhere) was held back from both.
+    const later = () => document.contains(input) && state && render(state);
     document.addEventListener('click', () => setTimeout(later), { once: true });
     setTimeout(later, 300);
   });
@@ -363,7 +365,7 @@ function editor(initial: string): HTMLElement {
 
 function close(): void {
   editing = null;
-  if (state) renderMap(state);
+  if (state) render(state);
 }
 
 async function commit(text: string): Promise<void> {
@@ -439,7 +441,7 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
   { combos: ['ArrowDown'], what: '次の兄弟へ', run: ({ siblings, i }) => siblings[i + 1] && select(siblings[i + 1]!.id) },
   { combos: ['+', '='], what: '展開', run: ({ n, isTop }) => fold(n, false, isTop) },
   { combos: ['-'], what: '折りたたむ', run: ({ n, isTop }) => fold(n, true, isTop) },
-  { combos: ['F6'], what: 'このノードに絞って表示 (ドリルダウン)', run: ({ n }) => drill(n.id) },
+  { combos: ['F6'], what: 'このノードに絞って表示 (ドリルダウン)', run: ({ n }) => n.children.length && drill(n.id) },
   { combos: ['Shift+F6'], what: '1 段上に戻る (ドリルアップ)', run: () => state && drill(find(state.doc.root, drilled)?.parent?.id ?? state.doc.root.id, false) },
   { combos: ['Ctrl+=', 'Ctrl++'], what: '拡大', run: () => setZoom(zoom + 0.1) },
   { combos: ['Ctrl+-'], what: '縮小', run: () => setZoom(zoom - 0.1) },
@@ -460,9 +462,7 @@ function showKeys(): void {
   }
   d.showModal();
 }
-// Closing returns focus to the header button that opened the sheet, where map keys are off.
-// Optional: without a token the page is replaced by a message and there is no sheet.
-document.getElementById('keys')?.addEventListener('close', () => (document.activeElement as HTMLElement | null)?.blur());
+
 
 document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
