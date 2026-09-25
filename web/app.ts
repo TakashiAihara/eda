@@ -26,7 +26,8 @@ let zoom = clampZoom(Number(localStorage.getItem('eda-zoom')) || 1);
 type Editing = { kind: 'child' | 'after' | 'before' | 'rename'; id: string };
 let editing: Editing | null = null;
 
-async function api(method: string, path: string, body?: unknown): Promise<unknown> {
+/** `quiet`: the caller reports a refusal itself (with more to say than the server's message). */
+async function api(method: string, path: string, body?: unknown, quiet = false): Promise<unknown> {
   const res = await fetch(path, {
     method,
     headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
@@ -34,14 +35,14 @@ async function api(method: string, path: string, body?: unknown): Promise<unknow
   });
   const json = (await res.json()) as { error?: string };
   if (!res.ok) {
-    alert(json.error ?? res.statusText);
-    throw new ShownError(json.error);
+    if (!quiet) alert(json.error ?? res.statusText);
+    throw new Refused(json.error ?? res.statusText);
   }
   return json;
 }
 
-/** Refused by the server and already alerted; anything else (network, a non-JSON body) was not. */
-class ShownError extends Error {}
+/** Refused by the server; alerted unless the call was quiet. */
+class Refused extends Error {}
 
 /**
  * What the person has typed and not sent, by field. Sections are redrawn from state, and
@@ -377,18 +378,19 @@ async function commit(text: string): Promise<void> {
   editing = null;
   try {
     if (e.kind === 'rename') {
-      await api('PATCH', `/api/nodes/${e.id}`, { text });
+      await api('PATCH', `/api/nodes/${e.id}`, { text }, true);
     } else if (e.kind === 'child') {
-      selected = ((await api('POST', '/api/nodes', { parentId: e.id, text })) as Node).id;
+      selected = ((await api('POST', '/api/nodes', { parentId: e.id, text }, true)) as Node).id;
     } else {
       const hit = find(state.doc.root, e.id);
       if (!hit?.parent) return close();
       const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
-      selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at })) as Node).id;
+      selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at }, true)) as Node).id;
     }
   } catch (err) {
     // What was typed goes in the message: the editor is about to go, and with it the text.
-    if (!(err instanceof ShownError)) alert(`保存できませんでした (${err instanceof Error ? err.message : err}): ${text}`);
+    // Refused (the node was deleted elsewhere, say), a network failure or a non-JSON body alike.
+    alert(`保存できませんでした (${err instanceof Error ? err.message : err}): ${text}`);
   }
   // Redrawn from the last state known if the server cannot be reached, so the editor still goes.
   await refresh(true).catch(() => state && render(state));
@@ -440,7 +442,8 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
     run: ({ n, parent, isTop }) => {
       if (!parent || isTop || (n.children.length && !confirm(`「${n.text}」と子ノード ${n.children.length} 件を消しますか`))) return;
       selected = parent.id;
-      void act('DELETE', `/api/nodes/${n.id}`);
+      // On a failure (api() has said why) the map is redrawn so the highlight follows `selected`.
+      void act('DELETE', `/api/nodes/${n.id}`).catch(() => state && render(state));
     },
   },
   // The drilled-down top has a parent, but it is not on screen.
@@ -482,6 +485,8 @@ document.addEventListener('keydown', (e) => {
   // and Space are theirs), not a text field, not the sidebar or the key sheet. Keys not in
   // the table (Shift+Tab, Ctrl+W and the like) stay the browser's.
   if (editing || !state || t.closest('input, textarea, aside, header, dialog, .ghost, .fold')) return;
+  // A refresh can blur the sheet's own button and drop focus on the body while it is still open.
+  if ((document.getElementById('keys') as HTMLDialogElement | null)?.open) return;
   const key = KEYS.find((k) => k.combos.includes(combo(e)));
 
   const hit = find(state.doc.root, selected);
