@@ -45,7 +45,7 @@ test('topic colours follow creation order, not position, and differ for the firs
   const six = topicColours(['n20', 'n2', 'n14', 'n5', 'n11', 'n8']);
   expect(['n2', 'n5', 'n8', 'n11', 'n14', 'n20'].map((id) => six.get(id))).toEqual([0, 1, 2, 3, 4, 5]);
   // The palette has six slots: the seventh wraps to the first.
-  expect(topicColours(['n7', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6']).get('n7')).toBe(0);
+  expect(topicColours(['n1', 'n7', 'n2', 'n3', 'n4', 'n5', 'n6']).get('n7')).toBe(0);
 });
 
 test('zoom is clamped and rounded, and junk falls back to 1', () => {

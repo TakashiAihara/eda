@@ -443,12 +443,17 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
     run: ({ n, parent, isTop }) => {
       if (!parent || isTop || (n.children.length && !confirm(`「${n.text}」と子ノード ${n.children.length} 件を消しますか`))) return;
       selected = parent.id;
-      void act('DELETE', `/api/nodes/${n.id}`).catch((err) => {
-        // A refusal was alerted by api(); a network failure was not. The node is still there.
-        if (!(err instanceof Refused)) alert(`削除できませんでした (${err instanceof Error ? err.message : err})`);
-        selected = n.id;
-        if (state) render(state);
-      });
+      // The catch is on the DELETE alone: a refresh failing after a delete that worked is not a failed delete.
+      api('DELETE', `/api/nodes/${n.id}`).then(
+        () => refresh(true).catch(() => {}),
+        (err) => {
+          // A refusal was alerted by api(); a network failure was not. The node is still there.
+          if (!(err instanceof Refused)) alert(`削除できませんでした (${err instanceof Error ? err.message : err})`);
+          // Back on it, unless the person has moved on while the request was out.
+          if (selected === parent.id) selected = n.id;
+          if (state) render(state);
+        },
+      );
     },
   },
   // The drilled-down top has a parent, but it is not on screen.
