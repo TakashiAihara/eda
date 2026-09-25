@@ -84,7 +84,6 @@ const onEnter = (fn: (v: string, key: string | undefined) => void) => (e: Event)
 const originLabel = (o: Origin): string =>
   o.by === 'human' ? '人が追加' : o.by === 'md-edit' ? 'map.md の編集を採用' : `AI の提案を採用${o.model ? ` (${o.model})` : ''}`;
 
-
 function renderHead(s: State): void {
   const crumbs = pathTo(s.doc.root, drilled);
   $('head').replaceChildren(
@@ -123,6 +122,8 @@ function setZoom(z: number): void {
 function drill(id: string, select = true): void {
   drilled = id;
   if (select) selected = id;
+  // Off the button that did it: the sidebar is not redrawn while it holds focus.
+  (document.activeElement as HTMLElement | null)?.blur();
   if (state) render(state);
 }
 
@@ -224,6 +225,8 @@ function renderNode(s: State): void {
           ),
           h('input', { placeholder: 'kaneo のタスク URL を貼ってリンク (Enter)', 'data-draft': `${n.id}:task`, keydown: onEnter((v, k) => act('POST', `${base}/tasks`, { url: v }, [k, v])) }),
         ]),
+    // A pointer route to F6, which on a Mac needs Fn and some browsers keep for themselves.
+    ...(n.children.length && n.id !== drilled ? [h('div', { class: 'row' }, h('button', { click: () => drill(n.id) }, 'このノードに絞って表示 (F6)'))] : []),
     // Not the drilled-down top either, as with the keyboard: it is the view's root.
     ...(hit.parent && n.id !== drilled ? [h('div', { class: 'row' }, h('button', { class: 'danger', click: () => confirm(`「${n.text}」と子ノードを消しますか`) && act('DELETE', base) }, 'このノードを削除'))] : []),
   );
@@ -298,7 +301,10 @@ function render(s: State, withMap = true): void {
   if (withMap && !editing) {
     // Settled before the header, whose breadcrumb reads it.
     viewTop(s);
+    // The header is rebuilt on every change; a toolbar button reached with Tab keeps its focus.
+    const focused = document.activeElement?.closest('header') ? document.activeElement?.getAttribute('title') : null;
     renderHead(s);
+    if (focused) document.querySelector<HTMLElement>(`header [title="${focused}"]`)?.focus();
     renderMap(s);
   }
   const busy = document.activeElement?.closest('aside section')?.id;
@@ -448,14 +454,15 @@ function showKeys(): void {
     d.append(
       h('h2', {}, 'キー (マップにフォーカスがあるとき)'),
       h('table', {}, ...KEYS.map((k) => h('tr', {}, h('td', {}, ...k.combos.flatMap((c, j) => [j ? ' / ' : '', h('kbd', {}, show(c))])), h('td', {}, k.what)))),
-      h('p', { class: 'small' }, '提案ノード (半透明) はクリックで採用、横の ✕ で却下。'),
+      h('p', { class: 'small' }, '提案ノード (点線の枠) はクリックで採用、横の ✕ で却下。'),
       h('form', { method: 'dialog' }, h('button', {}, '閉じる')),
     );
   }
   d.showModal();
 }
 // Closing returns focus to the header button that opened the sheet, where map keys are off.
-$('keys').addEventListener('close', () => (document.activeElement as HTMLElement | null)?.blur());
+// Optional: without a token the page is replaced by a message and there is no sheet.
+document.getElementById('keys')?.addEventListener('close', () => (document.activeElement as HTMLElement | null)?.blur());
 
 document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;

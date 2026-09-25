@@ -76,7 +76,6 @@ a { color: var(--accent); word-break: break-all; }
 .tree ul > li:last-child::after { bottom: 50%; border-bottom-left-radius: 8px; }
 .tree ul > li:only-child::after { display: none; }
 
-
 .node { font: inherit; color: inherit; text-align: left; background: var(--card); border: 1.5px solid var(--edge); border-radius: 8px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; display: inline-flex; align-items: center; gap: 5px; }
 .node .text { overflow: hidden; text-overflow: ellipsis; }
 .node.root { font-weight: 700; font-size: 16px; padding: 8px 20px; border-radius: 999px; background: var(--accent); border-color: var(--accent); color: var(--bg); }

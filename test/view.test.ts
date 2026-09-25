@@ -42,11 +42,15 @@ test('topic colours follow creation order, not position, and differ for the firs
   // n9 sorts before n10 as a number, not as a string.
   expect(topicColours(['n10', 'n9']).get('n9')).toBe(0);
   expect(new Set(topicColours(['n2', 'n5', 'n8', 'n11', 'n14', 'n20']).values()).size).toBe(6);
+  // The palette has six slots: the seventh wraps to the first.
+  expect(topicColours(['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7']).get('n7')).toBe(0);
 });
 
 test('zoom is clamped and rounded, and junk falls back to 1', () => {
   expect(clampZoom(10)).toBe(2);
   expect(clampZoom(0.1)).toBe(0.5);
   expect(clampZoom(1.04)).toBe(1);
+  // Steps of a tenth survive: the buttons move 1 → 1.1 → 1.2, not back to 1.
+  expect([clampZoom(1 + 0.1), clampZoom(1.1 + 0.1), clampZoom(1 - 0.1)]).toEqual([1.1, 1.2, 0.9]);
   expect(clampZoom(Number('x'))).toBe(1);
 });
