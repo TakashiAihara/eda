@@ -7,6 +7,14 @@
   --accent: #2f6f4f;
   --ai: #7a4fb0;
   --ghost: #b7791f;
+  --danger: #c92a2a;
+  /* main-branch colours, picked by a top-level branch's index mod 6 */
+  --b0: #d9480f;
+  --b1: #1971c2;
+  --b2: #2f9e44;
+  --b3: #ae3ec9;
+  --b4: #0c8599;
+  --b5: #c2255c;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -19,47 +27,71 @@
     --accent: #7cc49b;
     --ai: #b99be0;
     --ghost: #e3b35c;
+    --danger: #ff8787;
+    --b0: #ff8a4c;
+    --b1: #74c0fc;
+    --b2: #69db7c;
+    --b3: #da77f2;
+    --b4: #3bc9db;
+    --b5: #f783ac;
   }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
-header { padding: 8px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+header { padding: 6px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 header h1 { font-size: 16px; margin: 0; }
 header .meta { color: var(--muted); font-size: 12px; }
 header code { user-select: all; }
+header .crumbs { font-size: 13px; }
+header .tools { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+header .zoom { font-size: 12px; min-width: 4.5em; color: var(--muted); }
 main { flex: 1; display: grid; grid-template-columns: 1fr 380px; min-height: 0; }
-#map { overflow: auto; padding: 24px; }
+#map { overflow: auto; padding: 32px; }
 aside { border-left: 1px solid var(--line); overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px; }
 aside h2 { font-size: 13px; margin: 0 0 6px; color: var(--muted); }
 input, textarea, button { font: inherit; color: inherit; }
 input, textarea { width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
 textarea { min-height: 60px; resize: vertical; }
+/* the browser default (#757575) is 3.3:1 on the dark card; --muted clears 4.5:1 in both themes */
+input::placeholder, textarea::placeholder { color: var(--muted); }
 button { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 2px 10px; cursor: pointer; }
 button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+button.danger { color: var(--danger); border-color: var(--danger); }
 .row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
 .small { font-size: 12px; color: var(--muted); }
 a { color: var(--accent); word-break: break-all; }
 
-/* horizontal tree: each level is a column of rows, joined by borders */
+.icon { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.125em; flex: none; }
+.icon-btn { padding: 3px 6px; line-height: 1; display: inline-flex; }
+
+/* horizontal tree: each level is a column of rows, joined by borders in the branch's colour */
 .tree, .tree ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.tree li { display: flex; align-items: center; position: relative; padding: 3px 0 3px 20px; }
+.tree li { --edge: var(--branch, var(--line)); display: flex; align-items: center; position: relative; padding: 4px 0 4px 24px; }
 .tree > li { padding-left: 0; }
-.tree ul { position: relative; margin-left: 20px; }
-.tree ul::before { content: ''; position: absolute; left: -20px; top: 50%; width: 20px; border-top: 1px solid var(--line); }
-.tree ul > li::before { content: ''; position: absolute; left: 0; top: 50%; width: 20px; border-top: 1px solid var(--line); }
-.tree ul > li::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--line); }
-.tree ul > li:first-child::after { top: 50%; }
-.tree ul > li:last-child::after { bottom: 50%; }
+.tree ul { position: relative; margin-left: 24px; }
+.tree ul::before { content: ''; position: absolute; left: -24px; top: 50%; width: 24px; border-top: 2px solid var(--edge); }
+.tree ul > li::before { content: ''; position: absolute; left: 0; top: 50%; width: 24px; border-top: 2px solid var(--edge); }
+.tree ul > li::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-left: 2px solid var(--edge); }
+.tree ul > li:first-child::after { top: 50%; border-top-left-radius: 8px; }
+.tree ul > li:last-child::after { bottom: 50%; border-bottom-left-radius: 8px; }
 .tree ul > li:only-child::after { display: none; }
-.node { font: inherit; color: inherit; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
-.node.root { font-weight: 600; font-size: 15px; }
-.node.sel { outline: 2px solid var(--accent); }
-.node.ai { border-color: var(--ai); }
-.node .tags { color: var(--muted); font-size: 11px; margin-left: 6px; }
-.node.ghost { border-style: dashed; border-color: var(--ghost); opacity: 0.55; }
-.node.ghost:hover { opacity: 0.9; }
-.node.pending-edit { box-shadow: 0 0 0 2px var(--ghost); }
-.fold { margin-left: 4px; font-size: 11px; padding: 0 5px; }
+/* the root's own line to its column has no branch; its children's bracket takes theirs */
+.tree > li > ul::before { border-color: var(--line); }
+
+.node { font: inherit; color: inherit; text-align: left; background: var(--card); border: 1.5px solid var(--edge); border-radius: 8px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; display: inline-flex; align-items: center; gap: 5px; }
+.node .text { overflow: hidden; text-overflow: ellipsis; }
+.node.root { font-weight: 700; font-size: 16px; padding: 8px 20px; border-radius: 999px; background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.node.main { font-weight: 600; font-size: 15px; padding: 5px 14px; border-width: 2px; background: color-mix(in srgb, var(--edge) 12%, var(--card)); }
+.node.sel { outline: 2.5px solid var(--fg); outline-offset: 2px; }
+.node .tag { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 1px; }
+.node .tag.ai { color: var(--ai); }
+.node.root .tag { color: inherit; }
+.node.ghost { border-style: dashed; border-color: var(--ghost); color: var(--muted); opacity: 0.7; }
+.node.ghost:hover { opacity: 1; color: var(--fg); }
+.node.pending-edit { box-shadow: 0 0 0 3px var(--ghost); }
+.fold { margin-left: 4px; font-size: 11px; line-height: 1; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; border-color: var(--edge); color: var(--edge); display: inline-flex; align-items: center; justify-content: center; }
+/* rejecting a suggestion is not folding a branch: it takes the suggestion's colour */
+.fold.reject { border-color: var(--ghost); color: var(--ghost); }
 .node.edit { width: 16em; cursor: text; outline: 2px solid var(--accent); }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
@@ -68,3 +100,21 @@ a { color: var(--accent); word-break: break-all; }
 .msg { padding: 6px 8px; border-radius: 6px; background: var(--card); border: 1px solid var(--line); white-space: pre-wrap; }
 .msg.ai { border-color: var(--ai); }
 .msg .who { font-size: 11px; color: var(--muted); }
+
+.hint { color: var(--muted); font-size: 13px; margin-top: 16px; }
+
+/* narrow screens: the map on top, the sidebar under it, instead of a 380px column eating the map */
+@media (max-width: 720px) {
+  main { grid-template-columns: 1fr; grid-template-rows: minmax(50vh, auto) auto; overflow: auto; }
+  aside { border-left: none; border-top: 1px solid var(--line); overflow: visible; }
+  dialog { min-width: 0; width: calc(100vw - 32px); }
+}
+
+dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; min-width: 420px; }
+dialog::backdrop { background: rgb(0 0 0 / 0.35); }
+dialog h2 { font-size: 15px; margin: 0 0 10px; }
+dialog table { border-collapse: collapse; width: 100%; }
+dialog td { padding: 4px 8px; border-bottom: 1px solid var(--line); }
+dialog td:first-child { white-space: nowrap; }
+kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--bg); }
+dialog form { text-align: right; margin-top: 12px; }

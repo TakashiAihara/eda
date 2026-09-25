@@ -42,8 +42,11 @@ Inside the session, say what you want to think about; the session runs `eda serv
 | Delete / Backspace | delete the node |
 | ← → ↑ ↓ | parent / first child / previous / next sibling |
 | + / - | expand / collapse |
+| F6 / Shift+F6 | drill down to the node / back up one level (view only, not saved) |
+| Ctrl+= / Ctrl+- / Ctrl+0 | zoom in / out / reset (also the buttons at the top right) |
+| ? | the key sheet |
 
-Suggested nodes appear translucent: click to adopt, ✕ to reject.
+Suggested nodes appear translucent: click to adopt, ✕ to reject. Each branch off the root gets its own colour; nodes adopted from an AI suggestion carry a ✦ mark.
 
 ## Files
 
