@@ -35,10 +35,13 @@ async function api(method: string, path: string, body?: unknown): Promise<unknow
   const json = (await res.json()) as { error?: string };
   if (!res.ok) {
     alert(json.error ?? res.statusText);
-    throw new Error(json.error);
+    throw new ShownError(json.error);
   }
   return json;
 }
+
+/** Refused by the server and already alerted; anything else (network, a non-JSON body) was not. */
+class ShownError extends Error {}
 
 /**
  * What the person has typed and not sent, by field. Sections are redrawn from state, and
@@ -383,11 +386,12 @@ async function commit(text: string): Promise<void> {
       const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
       selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at })) as Node).id;
     }
-  } catch {
-    // api() has shown the error (the node was deleted elsewhere, say); the redraw below
-    // still has to take the editor away.
+  } catch (err) {
+    // What was typed goes in the message: the editor is about to go, and with it the text.
+    if (!(err instanceof ShownError)) alert(`保存できませんでした (${err instanceof Error ? err.message : err}): ${text}`);
   }
-  await refresh(true);
+  // Redrawn from the last state known if the server cannot be reached, so the editor still goes.
+  await refresh(true).catch(() => state && render(state));
 }
 
 function open(kind: Editing['kind']): void {
@@ -465,6 +469,10 @@ function showKeys(): void {
       h('form', { method: 'dialog' }, h('button', {}, '閉じる')),
     );
   }
+  // The header is rebuilt on every change, so the button that opened the sheet may be gone
+  // by the time it closes; focus goes back to its replacement.
+  const opener = document.activeElement?.closest('header') ? document.activeElement.getAttribute('data-key') : null;
+  d.addEventListener('close', () => opener && document.querySelector<HTMLElement>(`header [data-key="${CSS.escape(opener)}"]`)?.focus(), { once: true });
   d.showModal();
 }
 
@@ -475,9 +483,7 @@ document.addEventListener('keydown', (e) => {
   // the table (Shift+Tab, Ctrl+W and the like) stay the browser's.
   if (editing || !state || t.closest('input, textarea, aside, header, dialog, .ghost, .fold')) return;
   const key = KEYS.find((k) => k.combos.includes(combo(e)));
-  // Tab can put focus on a node that is not the selected one; the keys act on what has focus.
-  const focusedNode = t.closest<HTMLElement>('.node[data-id]')?.dataset['id'];
-  if (key && focusedNode) selected = focusedNode;
+
   const hit = find(state.doc.root, selected);
   if (!key || !hit) return;
   e.preventDefault();
@@ -494,3 +500,22 @@ function decide(e: Event, id: string, what: 'accept' | 'reject'): void {
     for (const b of li?.querySelectorAll('button') ?? []) b.disabled = false;
   });
 }
+
+/**
+ * The selection follows keyboard focus (Tab from the header, Shift+Tab from the sidebar), so the
+ * highlighted node is always the one the keys act on. Updated in place: redrawing the map would
+ * take away the button that just received focus.
+ */
+document.addEventListener('focusin', (e) => {
+  const box = (e.target as HTMLElement).closest?.<HTMLElement>('.node[data-id]');
+  const id = box?.dataset['id'];
+  if (!box || !id || id === selected || !state) return;
+  selected = id;
+  for (const x of document.querySelectorAll('.node.sel')) {
+    x.classList.remove('sel');
+    x.setAttribute('aria-pressed', 'false');
+  }
+  box.classList.add('sel');
+  box.setAttribute('aria-pressed', 'true');
+  render(state, false);
+});
