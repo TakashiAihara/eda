@@ -383,7 +383,8 @@ async function commit(text: string): Promise<void> {
       selected = ((await api('POST', '/api/nodes', { parentId: e.id, text }, true)) as Node).id;
     } else {
       const hit = find(state.doc.root, e.id);
-      if (!hit?.parent) return close();
+      // The node Enter was pressed on is gone (deleted elsewhere): nowhere to put it.
+      if (!hit?.parent) throw new Error('隣のノードが削除されました');
       const at = hit.parent.children.findIndex((c) => c.id === e.id) + (e.kind === 'after' ? 1 : 0);
       selected = ((await api('POST', '/api/nodes', { parentId: hit.parent.id, text, index: at }, true)) as Node).id;
     }
@@ -442,8 +443,12 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
     run: ({ n, parent, isTop }) => {
       if (!parent || isTop || (n.children.length && !confirm(`「${n.text}」と子ノード ${n.children.length} 件を消しますか`))) return;
       selected = parent.id;
-      // On a failure (api() has said why) the map is redrawn so the highlight follows `selected`.
-      void act('DELETE', `/api/nodes/${n.id}`).catch(() => state && render(state));
+      void act('DELETE', `/api/nodes/${n.id}`).catch((err) => {
+        // A refusal was alerted by api(); a network failure was not. The node is still there.
+        if (!(err instanceof Refused)) alert(`削除できませんでした (${err instanceof Error ? err.message : err})`);
+        selected = n.id;
+        if (state) render(state);
+      });
     },
   },
   // The drilled-down top has a parent, but it is not on screen.
