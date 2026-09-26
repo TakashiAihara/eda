@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { Node } from '../src/map.ts';
-import { clampZoom, pathTo, topicColours, visibleSelection } from '../web/view.ts';
+import { clampZoom, deepest, pathTo, topicColours, visibleSelection } from '../web/view.ts';
 
 const n = (id: string, children: Node[] = [], collapsed = false): Node => ({ id, text: id, children, urls: [], tasks: [], origin: { by: 'human' }, ...(collapsed ? { collapsed } : {}) });
 
@@ -56,6 +56,20 @@ test('topic colours follow creation order, not position, and differ for the firs
   expect(['n2', 'n5', 'n8', 'n11', 'n14', 'n20'].map((id) => six.get(id))).toEqual([0, 1, 2, 3, 4, 5]);
   // The palette has six slots: the seventh wraps to the first.
   expect(topicColours(['n1', 'n7', 'n2', 'n3', 'n4', 'n5', 'n6']).get('n7')).toBe(0);
+});
+
+test('deepest counts levels with something drawn: children, and suggestions waiting under a node', () => {
+  const none = () => 0;
+  const open = n('n1', [n('n2', [n('n3')]), n('n5')]);
+  expect(deepest(open, none)).toBe(2);
+  expect(deepest(n('n1'), none)).toBe(0);
+  // A suggestion waiting under a leaf adds a level; so does one under a collapsed node.
+  expect(deepest(open, (id) => (id === 'n3' ? 1 : 0))).toBe(3);
+  expect(deepest(map, (id) => (id === 'n2' ? 1 : 0))).toBe(2);
+  // A collapsed node hides its children, unless it is a drilled-down top that shows them.
+  expect(deepest(map, none)).toBe(1);
+  expect(deepest(map.children[0]!, none)).toBe(0);
+  expect(deepest(map.children[0]!, none, true)).toBe(2);
 });
 
 test('zoom is clamped and rounded, and junk falls back to 1', () => {

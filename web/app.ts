@@ -1,7 +1,7 @@
 import { find, kaneoTaskUrl, MARKERS, type MapDoc, type Marker, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
 import { icon } from './icons.ts';
 import { combo, show } from './keys.ts';
-import { clampZoom, pathTo, topicColours, visibleSelection } from './view.ts';
+import { clampZoom, deepest, pathTo, topicColours, visibleSelection } from './view.ts';
 
 type State = { rev: number; dir: string; doc: MapDoc; kaneoHost: string | null };
 
@@ -166,14 +166,12 @@ const levelOf = (s: State, id: string): number => pathTo(viewTop(s), id).length 
 /** Add suggestions waiting under a node: drawn as ghosts, so a level limit can hide them too. */
 const waitingUnder = (s: State, id: string): number => s.doc.suggestions.filter((x) => x.kind === 'add' && x.parentId === id).length;
 
-/** The deepest level under `n` with something drawn on it (a child, or a ghost), to tell whether a level limit hides anything. */
-const deepest = (s: State, n: Node, showChildren = !n.collapsed): number =>
-  Math.max(0, waitingUnder(s, n.id) ? 1 : 0, ...(showChildren ? n.children : []).map((c) => 1 + deepest(s, c)));
+
 
 /** Whether the level limit hides anything. A drilled-down top shows its children even when collapsed. */
 function levelsHide(s: State): boolean {
   const t = viewTop(s);
-  return levels < deepest(s, t, !t.collapsed || t !== s.doc.root);
+  return levels < deepest(t, (id) => waitingUnder(s, id), !t.collapsed || t !== s.doc.root);
 }
 
 /** The node drawn as the root: the drilled-down one, or the map's root once that is gone. */
@@ -232,7 +230,7 @@ function renderMap(s: State): void {
       li.append(h('button', { class: 'fold', title: 'すべてのレベルを表示 (Alt+0)', 'aria-label': 'すべてのレベルを表示', click: () => setLevels(Infinity) }, `+${hiddenHere}`));
     } else if (n.children.length && !(depth === 0 && drilledIn)) {
       li.append(
-        h('button', { class: 'fold', title: n.collapsed ? '展開 (+)' : '折りたたむ (-)', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) },
+        h('button', { class: 'fold', title: n.collapsed ? '展開 (+)' : '折りたたむ (-)', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => (n.collapsed ? expand(n, false) : act('PATCH', `/api/nodes/${n.id}`, { collapsed: true })) },
           n.collapsed ? `+${n.children.length}` : icon('minus')),
       );
     }
@@ -245,7 +243,7 @@ function renderMap(s: State): void {
     if (editing?.kind === 'child' && editing.id === n.id) kids.push(h('li', {}, editor('')));
     // Not at the level limit: adopting one there would put a node straight out of sight.
     // The sidebar still lists every candidate.
-    if (!cut) kids.push(...ghosts(n.id));
+    if (depth !== levels) kids.push(...ghosts(n.id));
     if (kids.length) li.append(h('ul', {}, ...kids));
     return li;
   };
@@ -496,7 +494,17 @@ function open(kind: Editing['kind']): void {
 /** The selected node and where it sits, as the key actions see it. */
 type Here = { n: Node; parent: Node | undefined; siblings: Node[]; i: number; isTop: boolean; pressed: string };
 
-const atLimit = (s: State, n: Node): boolean => !n.collapsed && n.children.length > 0 && levelOf(s, n.id) === levels;
+/**
+ * Expand a node, from the + key or its fold button alike. A collapsed node at the level limit
+ * needs both: unfolded (saved) and one more level (view), or its children would stay hidden.
+ */
+function expand(n: Node, isTop: boolean): void {
+  if (!state) return;
+  if (n.collapsed) void fold(n, false, isTop);
+  if (levelOf(state, n.id) === levels && n.children.length + waitingUnder(state, n.id)) setLevels(levels + 1);
+}
+
+const atLimit = (s: State, n: Node): boolean => !n.collapsed && n.children.length + waitingUnder(s, n.id) > 0 && levelOf(s, n.id) === levels;
 
 // Not on the drilled-down top: it shows its children whatever the flag says, so a fold there
 // would change the saved map with nothing moving on screen.
@@ -544,13 +552,7 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
   {
     combos: ['+', '='],
     what: '展開',
-    run: ({ n, isTop }) => {
-      if (!state) return;
-      // A collapsed node at the limit needs both: unfolded (saved) and one more level (view).
-      if (n.collapsed) void fold(n, false, isTop);
-      if (levelOf(state, n.id) === levels && n.children.length) setLevels(levels + 1);
-      else if (!n.collapsed) void fold(n, false, isTop);
-    },
+    run: ({ n, isTop }) => expand(n, isTop),
   },
   { combos: ['1', '2', '3'], what: '優先度 1 / 2 / 3 を付ける・外す', run: ({ n, pressed }) => void setMarker(n, `priority-${pressed}` as Marker) },
   { combos: ['d'], what: '進行中 → 完了 → なし', run: ({ n }) => void (n.markers?.includes('done') ? setMarker(n, 'done', false) : n.markers?.includes('doing') ? setMarker(n, 'done', true) : setMarker(n, 'doing', true)) },

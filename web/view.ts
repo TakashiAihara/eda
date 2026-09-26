@@ -37,4 +37,13 @@ export function topicColours(ids: string[]): Map<string, number> {
   return new Map([...ids].sort((a, b) => seq(a) - seq(b)).map((id, i) => [id, i % 6]));
 }
 
+/**
+ * The deepest level under `n` with something drawn on it: a child, or a suggestion waiting
+ * under a node (`waiting`), to tell whether a level limit hides anything. `showChildren` is
+ * false for a collapsed node, except a drilled-down top, which shows its children anyway.
+ */
+export function deepest(n: Node, waiting: (id: string) => number, showChildren = !n.collapsed): number {
+  return Math.max(0, waiting(n.id) ? 1 : 0, ...(showChildren ? n.children : []).map((c) => 1 + deepest(c, waiting)));
+}
+
 export const clampZoom = (z: number): number => Math.min(2, Math.max(0.5, Math.round((Number.isFinite(z) ? z : 1) * 10) / 10));

@@ -52,7 +52,7 @@ Status: slice 1 implemented (PR #8). Slice 2 (markers, level limit) implemented 
 - `map.md` does not carry markers: it stays a plain outline that Markmap and Obsidian open.
 - The level limit (Alt+1..9, Alt+0 for all) hides what is below that level under the drawn root without touching `collapsed`, so it is not saved and a reload shows every level.
 - While it hides something (a node or a waiting suggestion), the header says so with a way back, and a node at the cut gets a button with the hidden count that shows every level again rather than saving a fold. A node already collapsed there keeps its own fold button.
-- Suggestions below the limit are not drawn on the map; the cut button counts them and the sidebar lists them.
+- Suggestions below the limit are not drawn on the map; the cut button counts those directly under its node, and the sidebar lists them all.
 - At the limit, `+` shows one more level (and unfolds the node if it was collapsed), and `-` does nothing: there is no fold on screen to save.
 - Tab on a node at the limit shows one more level for the new child. Adding a child from the node panel or adopting from the sidebar does not raise the limit; the new node is counted on the cut button.
 - With Alt, digit keys are read from their position (`KeyboardEvent.code`), since Option+1 on a Mac types ¡.
