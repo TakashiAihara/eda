@@ -18,6 +18,17 @@ test('Cmd counts as Ctrl, Alt is kept, Space is named', () => {
   expect(k(' ')).toBe('Space');
 });
 
+test('Alt with a digit key reads the digit from the key position (Option+1 types ¡ on a Mac)', () => {
+  expect(combo({ key: '¡', code: 'Digit1', ctrlKey: false, metaKey: false, altKey: true, shiftKey: false })).toBe('Alt+1');
+  // Without Alt the character wins: on AZERTY the Digit1 key types & and must not act as 1.
+  expect(combo({ key: '&', code: 'Digit1', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false })).toBe('&');
+});
+
+test('letters are read in lower case (CapsLock)', () => {
+  expect(k('D')).toBe('d');
+  expect(k('f')).toBe('f');
+});
+
 test('arrows are shown as arrows', () => {
   expect(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].map(show)).toEqual(['←', '→', '↑', '↓']);
   expect(show('Shift+F6')).toBe('Shift+F6');

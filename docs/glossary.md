@@ -19,6 +19,8 @@
 | pending slot | At most one AI suggestion per session waits at a time | `suggest()` |
 | task link | A kaneo task stored as workspace/project/task ids | `TaskLink` |
 | instance | A running `eda serve`, registered so the MCP server can find it | `~/.eda/instances/<pid>.json` |
+| marker | One of a fixed set on a node: priority-1..3, doing, done, flag, star, question. A priority and a progress state each exclude the others of their group. Set by a person only; the AI reads them | `Node.markers`, `MARKERS` / `setMarker` in `src/map.ts` |
+| level limit | Showing only N levels under the drawn root (XMind's expand-to-level, Alt+1..9). Browser-only, never writes `collapsed` | `levels` in `web/app.ts` |
 | drill-down | Showing one node as the root of the view (XMind F6). Browser-only; a reload shows the whole map | `drilled` in `web/app.ts` |
 | main topic | A child of the drawn root (XMind's term); it and its subtree share one colour, picked by its creation rank | `topicColours` in `web/view.ts`, `--b0`..`--b5` in `web/style.css` |
 | channel | Claude Code's MCP push (`notifications/claude/channel`) that delivers the person's chat to the session | `src/mcp.ts` |

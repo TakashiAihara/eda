@@ -321,3 +321,32 @@ test('a session with no map is told how to start one', async () => {
   const lost = new Client('S9', '/w', () => []);
   await expect(runTool(lost, 'read_map', {})).rejects.toThrow(/eda serve/);
 });
+
+test('a person sets and clears a marker; the AI reads it, and its suggestions cannot carry one', async () => {
+  const n = (await person('POST', '/api/nodes', { parentId: 'n1', text: 'marked' })).json;
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'done', on: true })).json.markers).toEqual(['done']);
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'nope', on: true })).status).toBe(400);
+  const noOn = await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'flag' });
+  expect([noOn.status, noOn.json.error]).toEqual([400, 'on (true / false) is required']);
+  // Saved, not only held in memory.
+  expect(JSON.stringify(loadMap(dir)!.root)).toContain('"markers":["done"]');
+  // on: false goes through the route too.
+  await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'flag', on: true });
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'flag', on: false })).json.markers).toEqual(['done']);
+  // The same request twice lands on the same state: the route sets, it does not toggle.
+  await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'star', on: true });
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'star', on: true })).json.markers).toEqual(['done', 'star']);
+  await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'star', on: false });
+  expect(await runTool(claude, 'read_map', {})).toContain('markers: done');
+  // An AI edit carrying markers: the field is not read, so adopting it changes none.
+  const r = await fetch(`${base}/api/ai/suggest`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json', 'x-eda-session': 'S9' },
+    body: JSON.stringify({ kind: 'edit', nodeId: n.id, text: 'marked!', markers: ['flag'], reason: 'r' }),
+  });
+  const s = (await r.json()) as { id: string };
+  await person('POST', `/api/suggestions/${s.id}/accept`, {});
+  const after = (await person('GET', '/api/state')).json.doc.root.children.find((c: { id: string }) => c.id === n.id);
+  expect(after.text).toBe('marked!');
+  expect(after.markers).toEqual(['done']);
+});

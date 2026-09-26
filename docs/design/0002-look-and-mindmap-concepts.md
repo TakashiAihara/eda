@@ -1,6 +1,6 @@
 # Look, icons, keys, and what to take from XMind / MindMeister
 
-Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decisions: which markers to store, whether collapse-to-level is saved, whether relationships and boundaries come in at all.
+Status: slice 1 implemented (PR #8). Slice 2 (markers, level limit) implemented after the owner's decisions: a fixed marker set, the level limit view-only. Slice 3 (relationships, boundaries) is wanted but deferred (kaneo eda#42).
 
 ## Background
 
@@ -23,10 +23,10 @@ Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decision
 | Key sheet | XMind's shortcut list (Help menu) | slice 1, `?` | no |
 | Drill down / up | XMind `F6` / `Shift+F6` | slice 1, view only | no |
 | Zoom | both | slice 1, `Ctrl+=` / `Ctrl+-` / `Ctrl+0` on the map | no |
-| Markers (priority, progress, flag) | XMind markers, MindMeister task status | slice 2 | yes (D-01) |
-| Collapse to level N | XMind "expand to level" | slice 2 | depends on D-02 |
-| Relationship (a line between any two nodes) | both | slice 3 | yes (D-03) |
-| Boundary (a box around siblings) | XMind | slice 3 | yes (D-03) |
+| Markers (priority, progress, flag) | XMind markers, MindMeister task status | slice 2 | yes: `Node.markers` |
+| Collapse to level N | XMind "expand to level" | slice 2, view only | no |
+| Relationship (a line between any two nodes) | both | slice 3, deferred | yes |
+| Boundary (a box around siblings) | XMind | slice 3, deferred | yes |
 | Balanced layout (branches on both sides of the root) | MindMeister default, XMind "Mind Map" structure | not planned; the right-hand tree matches the `map.md` outline order | no |
 
 ## Slice 1 details
@@ -41,3 +41,19 @@ Status: slice 1 implemented (PR #8). Slices 2 and 3 wait on the owner's decision
 - The selection follows focus on a node (Tab from the header, Shift+Tab from the sidebar, or a mouse press), so the keys act on the highlighted node. Tab from the header lands on the view's top, which then becomes the selection.
 - The key sheet is generated from the table the key handler reads, so it lists exactly the keys the map takes. The README's key table is a hand-kept copy.
 - Narrow screens (720px and below) stack the sidebar under the map instead of a 380px column beside it. The header shows the map directory's last segment; the full path is its tooltip.
+
+## Slice 2 details
+
+- Markers are a fixed set, `priority-1..3`, `doing`, `done`, `flag`, `star`, `question`, stored as `Node.markers` (absent when empty, in that fixed order). Free labels were not taken: they would grow into a second task tracker next to the kaneo links.
+- One priority and one progress state at a time: setting one replaces the other of its group, as in XMind. Flag, star and question are independent.
+- Only a person sets markers (`POST /api/nodes/:id/markers`). The AI reads them in `read_map`; no MCP tool sets them, and an AI edit that carries a `markers` field is not read. The route shares the one token with the AI side, like adoption does (the known limit in 0001, issue #2). The AI does not suggest markers either (D-01).
+- The route takes `{ marker, on }` rather than toggling, so a doubled key press or a retried request lands on the same state, like the URL and task routes.
+- Keys: 1 / 2 / 3 toggle a priority, `d` cycles doing → done → none, `f` toggles the flag. Star and question are buttons in the node panel, which has a toggle for every marker.
+- `map.md` does not carry markers: it stays a plain outline that Markmap and Obsidian open.
+- The level limit (Alt+1..9, Alt+0 for all) hides what is below that level under the drawn root without touching `collapsed`, so it is not saved and a reload shows every level.
+- While it hides something (a node or a waiting suggestion), the header says so with a way back, and a node at the cut gets a button with the hidden count that shows every level again rather than saving a fold. A node already collapsed there keeps its own fold button.
+- Suggestions below the limit are not drawn on the map; the cut button counts those directly under its node, and the sidebar lists them all.
+- At the limit, `+` shows one more level (and unfolds the node if it was collapsed), and `-` does nothing: there is no fold on screen to save.
+- Tab on a node at the limit shows one more level for the new child. Adding a child from the node panel or adopting from the sidebar does not raise the limit; the new node is counted on the cut button.
+- With Alt, digit keys are read from their position (`KeyboardEvent.code`), since Option+1 on a Mac types ¡.
+- Known limit: Chrome and Firefox on Linux keep Alt+1..8 for switching tabs, which the page may not be able to take (not checked on a Linux desktop; macOS and Windows use other keys for tabs).

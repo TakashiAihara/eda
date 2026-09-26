@@ -5,7 +5,7 @@ Mind map you grow one node at a time with an AI that can only suggest.
 - The AI (a Claude Code session) can read the map and suggest **one** node or **one** change at a time. It cannot write.
 - You adopt, rewrite-then-adopt, or reject each suggestion in the browser.
 - You talk to the same Claude Code session from the map screen; your messages reach it as channel events.
-- Nodes carry URLs, a note, and links to kaneo tasks.
+- Nodes carry URLs, a note, links to kaneo tasks, and markers (priority 1–3, doing / done, flag, star, question) that only you set.
 
 Design: `docs/design/0001-v1.md`. Terms: `docs/glossary.md`.
 
@@ -42,6 +42,9 @@ Inside the session, say what you want to think about; the session runs `eda serv
 | Delete / Backspace | delete the node |
 | ← → ↑ ↓ | parent / first child / previous / next sibling |
 | + (or =) / - | expand / collapse |
+| 1 / 2 / 3 | toggle priority 1 / 2 / 3 |
+| d / f | cycle doing → done → none / toggle the flag (star and question are in the node panel) |
+| Alt+1 … Alt+9 / Alt+0 | show only that many levels / all levels (view only, not saved) |
 | F6 / Shift+F6 | drill down to the node / back up one level (view only, not saved) |
 | Ctrl+= (or Ctrl++) / Ctrl+- / Ctrl+0 | zoom the map in / out / reset (also the buttons at the top right; Cmd on macOS) |
 | ? | the key sheet |

@@ -21,6 +21,7 @@ import {
   removeUrl,
   say,
   suggest,
+  setMarker,
   toOutlineForAi,
 } from './map.ts';
 import { config, openMap, saveMap, syncMarkdown, token } from './store.ts';
@@ -136,6 +137,15 @@ export function startServer(opts: ServeOptions) {
       '/api/nodes/:id/urls': {
         POST: api(true, async (req, d, p) => addUrl(d, p['id']!, str((await body(req))['url']) ?? '')),
         DELETE: api(true, async (req, d, p) => removeUrl(d, p['id']!, str((await body(req))['url']) ?? '')),
+      },
+      // A person's route: the MCP server offers no tool that reaches it (D-01: markers are the person's
+      // own sorting). The token is shared with the AI side, as for adoption; see issue #2.
+      '/api/nodes/:id/markers': {
+        POST: api(true, async (req, d, p) => {
+          const b = await body(req);
+          if (typeof b['on'] !== 'boolean') throw new MapError('on (true / false) is required');
+          return setMarker(d, p['id']!, str(b['marker']) ?? '', b['on']);
+        }),
       },
       '/api/nodes/:id/tasks': {
         POST: api(true, async (req, d, p) => addTask(d, p['id']!, parseKaneoUrl(str((await body(req))['url']) ?? ''))),

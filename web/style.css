@@ -8,6 +8,11 @@
   --ai: #7a4fb0;
   --ghost: #b7791f;
   --danger: #c92a2a;
+  /* priority discs: dark enough for white text (≥4.5:1) here, light enough for dark text in dark mode */
+  --pri1: #c92a2a;
+  --pri2: #b54708;
+  --pri3: #1864ab;
+  --pri-text: #fff;
   /* main-topic colours, by the topic's creation rank mod 6 (topicColours in web/view.ts) */
   --b0: #d9480f;
   --b1: #1971c2;
@@ -28,6 +33,10 @@
     --ai: #b99be0;
     --ghost: #e3b35c;
     --danger: #ff8787;
+    --pri1: #ff8787;
+    --pri2: #ffa94d;
+    --pri3: #74c0fc;
+    --pri-text: #1b1c1a;
     --b0: #ff8a4c;
     --b1: #74c0fc;
     --b2: #69db7c;
@@ -89,6 +98,19 @@ a { color: var(--accent); word-break: break-all; }
 .node.ghost:hover { color: var(--fg); background: var(--card); }
 .node.pending-edit { box-shadow: 0 0 0 3px var(--ghost); }
 .fold { margin-left: 4px; font-size: 11px; line-height: 1; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; border-color: var(--edge); color: var(--fg); display: inline-flex; align-items: center; justify-content: center; }
+/* markers: priorities as numbered discs, the rest as icons in their own colours */
+.mark { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.mark.pri { width: 1.35em; height: 1.35em; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--pri-text); }
+.mark.priority-1 { background: var(--pri1); }
+.mark.priority-2 { background: var(--pri2); }
+.mark.priority-3 { background: var(--pri3); }
+.mark.done { color: var(--b2); }
+.mark.doing { color: var(--b1); }
+.mark.flag { color: var(--danger); }
+.mark.star { color: var(--ghost); }
+.mark.question { color: var(--ai); }
+.node.root .mark:not(.pri) { color: inherit; }
+.markers .icon-btn[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, var(--card)); border-color: var(--accent); }
 /* the root's fold has no branch colour, and --line is 1.7:1: too faint for a control */
 .tree > li > .fold { border-color: var(--muted); }
 /* rejecting a suggestion is not folding a branch: it takes the suggestion's colour */
