@@ -33,6 +33,16 @@ test('a drilled-down collapsed top still shows its children', () => {
   expect(visibleSelection(map, 'n4', true)).toBe('n2');
 });
 
+test('a depth limit hides what is below it, and the selection moves up to that level', () => {
+  const open = n('n1', [n('n2', [n('n3', [n('n4')])]), n('n5')]);
+  expect(visibleSelection(open, 'n4', false, 1)).toBe('n2');
+  expect(visibleSelection(open, 'n4', false, 2)).toBe('n3');
+  expect(visibleSelection(open, 'n4', false, 3)).toBe('n4');
+  expect(visibleSelection(open, 'n5', false, 1)).toBe('n5');
+  // A collapsed node above the limit still wins.
+  expect(visibleSelection(map, 'n4', false, 3)).toBe('n2');
+});
+
 test('topic colours follow creation order, not position, and differ for the first six', () => {
   const c = topicColours(['n30', 'n4', 'n17']);
   expect([c.get('n4'), c.get('n17'), c.get('n30')]).toEqual([0, 1, 2]);

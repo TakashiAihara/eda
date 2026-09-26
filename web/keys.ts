@@ -4,8 +4,10 @@
  * Shift is named only for keys without a character of their own. `?` and `+` already carry
  * it, and naming it there would make the same key read differently across keyboard layouts.
  */
-export function combo(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }): string {
-  const key = e.key === ' ' ? 'Space' : e.key;
+export function combo(e: { key: string; code?: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }): string {
+  // Option+1 on a Mac types ¡: with Alt, a digit key is read from its position instead.
+  const digit = e.altKey && e.code?.startsWith('Digit') ? e.code.slice(5) : undefined;
+  const key = digit ?? (e.key === ' ' ? 'Space' : e.key);
   return `${e.ctrlKey || e.metaKey ? 'Ctrl+' : ''}${e.altKey ? 'Alt+' : ''}${e.shiftKey && key.length > 1 ? 'Shift+' : ''}${key}`;
 }
 

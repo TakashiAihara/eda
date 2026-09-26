@@ -89,6 +89,19 @@ a { color: var(--accent); word-break: break-all; }
 .node.ghost:hover { color: var(--fg); background: var(--card); }
 .node.pending-edit { box-shadow: 0 0 0 3px var(--ghost); }
 .fold { margin-left: 4px; font-size: 11px; line-height: 1; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; border-color: var(--edge); color: var(--fg); display: inline-flex; align-items: center; justify-content: center; }
+/* markers: priorities as numbered discs, the rest as icons in their own colours */
+.mark { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.mark.pri { width: 1.35em; height: 1.35em; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; }
+.mark.priority-1 { background: var(--danger); }
+.mark.priority-2 { background: var(--b0); }
+.mark.priority-3 { background: var(--b1); }
+.mark.done { color: var(--b2); }
+.mark.doing { color: var(--b1); }
+.mark.flag { color: var(--danger); }
+.mark.star { color: var(--ghost); }
+.mark.question { color: var(--ai); }
+.node.root .mark:not(.pri) { color: inherit; }
+.markers .icon-btn[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, var(--card)); border-color: var(--accent); }
 /* the root's fold has no branch colour, and --line is 1.7:1: too faint for a control */
 .tree > li > .fold { border-color: var(--muted); }
 /* rejecting a suggestion is not folding a branch: it takes the suggestion's colour */

@@ -16,6 +16,8 @@ import {
   removeUrl,
   suggest,
   toMarkdown,
+  toggleMarker,
+  toOutlineForAi,
 } from '../src/map.ts';
 
 const ai = { by: 'ai' as const, session: 'S1' };
@@ -239,4 +241,31 @@ test('a node can be inserted at a sibling index (Enter / Shift+Enter)', () => {
   addChild(d, 'n1', 'b', { by: 'human' }, 1);
   addChild(d, 'n1', 'z', { by: 'human' }, 99);
   expect(d.root.children.map((c) => c.text)).toEqual(['a', 'b', 'c', 'z']);
+});
+
+test('markers toggle, and one of a group replaces the other', () => {
+  const d = newMap('plan');
+  const n = addChild(d, 'n1', 'hotel');
+  toggleMarker(d, n.id, 'flag');
+  toggleMarker(d, n.id, 'priority-2');
+  toggleMarker(d, n.id, 'doing');
+  // Kept in the fixed order, whatever order they were set in.
+  expect(n.markers).toEqual(['priority-2', 'doing', 'flag']);
+  toggleMarker(d, n.id, 'priority-1');
+  toggleMarker(d, n.id, 'done');
+  expect(n.markers).toEqual(['priority-1', 'done', 'flag']);
+  // flag and star are groups of their own: both can be on.
+  toggleMarker(d, n.id, 'star');
+  expect(n.markers).toEqual(['priority-1', 'done', 'flag', 'star']);
+  for (const m of ['priority-1', 'done', 'flag', 'star']) toggleMarker(d, n.id, m);
+  expect('markers' in n).toBe(false);
+});
+
+test('an unknown marker is refused, and the AI reads the markers', () => {
+  const d = newMap('plan');
+  const n = addChild(d, 'n1', 'hotel');
+  expect(() => toggleMarker(d, n.id, 'urgent')).toThrow(/unknown marker/);
+  expect(n.markers).toBeUndefined();
+  toggleMarker(d, n.id, 'question');
+  expect(toOutlineForAi(d)).toContain(`[${n.id}] hotel  (markers: question)`);
 });

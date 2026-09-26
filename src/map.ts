@@ -13,6 +13,16 @@ export type Origin =
 
 export type Url = { url: string; title?: string; origin: Origin };
 
+/**
+ * The markers a node can carry (judgment queue D-01: a fixed set rather than free labels, so
+ * they do not become a second task tracker next to the kaneo links).
+ */
+export const MARKERS = ['priority-1', 'priority-2', 'priority-3', 'doing', 'done', 'flag', 'star', 'question'] as const;
+export type Marker = (typeof MARKERS)[number];
+
+/** Markers of one group exclude each other, as XMind's do: one priority, one progress state. */
+const markerGroup = (m: Marker): string => (m.startsWith('priority-') ? 'priority' : m === 'doing' || m === 'done' ? 'progress' : m);
+
 /** A kaneo task, stored by id so the host can move without rewriting maps. */
 export type TaskLink = { workspace: string; project: string; task: string };
 
@@ -24,6 +34,8 @@ export type Node = {
   urls: Url[];
   tasks: TaskLink[];
   collapsed?: boolean;
+  /** XMind-style markers, set by a person only. Absent when there are none. */
+  markers?: Marker[];
   /** Who put the node there. */
   origin: Origin;
   /** Who last changed its text through an adopted candidate, when that was not the author. */
@@ -202,6 +214,19 @@ export function addTask(doc: MapDoc, id: string, link: TaskLink): void {
 export function removeTask(doc: MapDoc, id: string, task: string): void {
   const n = must(doc, id).node;
   n.tasks = n.tasks.filter((t) => t.task !== task);
+}
+
+/** Put a marker on a node, replacing any of its group, or take it off if it is already there. */
+export function toggleMarker(doc: MapDoc, id: string, marker: string): Node {
+  const n = must(doc, id).node;
+  if (!(MARKERS as readonly string[]).includes(marker)) throw new MapError(`unknown marker ${marker} (one of ${MARKERS.join(', ')})`);
+  const m = marker as Marker;
+  const had = n.markers?.includes(m) ?? false;
+  const kept = (n.markers ?? []).filter((x) => markerGroup(x) !== markerGroup(m));
+  const next = had ? kept : [...kept, m].sort((a, b) => MARKERS.indexOf(a) - MARKERS.indexOf(b));
+  if (next.length) n.markers = next;
+  else delete n.markers;
+  return n;
 }
 
 /** `<host>/dashboard/workspace/<ws>/project/<p>/task/<t>`, the route kaneo's web app serves a task on. */
@@ -447,6 +472,7 @@ export function toOutlineForAi(doc: MapDoc): string {
       n.urls.length ? `urls: ${n.urls.map((u) => u.url).join(' ')}` : '',
       n.tasks.length ? `tasks: ${n.tasks.map((t) => t.task).join(' ')}` : '',
       n.note ? `note: ${n.note.replace(/\s+/g, ' ')}` : '',
+      n.markers?.length ? `markers: ${n.markers.join(' ')}` : '',
     ].filter(Boolean);
     lines.push(`${'  '.repeat(depth)}- [${n.id}] ${n.text}${extra.length ? `  (${extra.join('; ')})` : ''}`);
     for (const c of n.children) walk(c, depth + 1);

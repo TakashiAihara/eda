@@ -16,11 +16,12 @@ export function pathTo(root: Node, id: string): Node[] {
  * `top` is the drawn root. A drilled-down top shows its children even when collapsed, so
  * its own flag does not hide anything.
  */
-export function visibleSelection(top: Node, id: string, topShowsChildren = false): string {
+export function visibleSelection(top: Node, id: string, topShowsChildren = false, depth = Infinity): string {
   const p = pathTo(top, id);
   // Gone, or outside the drilled-down branch: the top is what is left to select.
   if (!p.length) return top.id;
-  const hidden = p.findIndex((n, i) => n.collapsed && !(i === 0 && topShowsChildren));
+  // `depth`: levels shown under the top (Alt+1..9); a node at that level shows no children.
+  const hidden = p.findIndex((n, i) => i === depth || (n.collapsed && !(i === 0 && topShowsChildren)));
   return hidden === -1 || hidden === p.length - 1 ? id : p[hidden]!.id;
 }
 

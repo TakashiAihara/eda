@@ -21,6 +21,7 @@ import {
   removeUrl,
   say,
   suggest,
+  toggleMarker,
   toOutlineForAi,
 } from './map.ts';
 import { config, openMap, saveMap, syncMarkdown, token } from './store.ts';
@@ -136,6 +137,10 @@ export function startServer(opts: ServeOptions) {
       '/api/nodes/:id/urls': {
         POST: api(true, async (req, d, p) => addUrl(d, p['id']!, str((await body(req))['url']) ?? '')),
         DELETE: api(true, async (req, d, p) => removeUrl(d, p['id']!, str((await body(req))['url']) ?? '')),
+      },
+      // A person's route only: markers are the person's own sorting, not something the AI suggests (D-01).
+      '/api/nodes/:id/markers': {
+        POST: api(true, async (req, d, p) => toggleMarker(d, p['id']!, str((await body(req))['marker']) ?? '')),
       },
       '/api/nodes/:id/tasks': {
         POST: api(true, async (req, d, p) => addTask(d, p['id']!, parseKaneoUrl(str((await body(req))['url']) ?? ''))),

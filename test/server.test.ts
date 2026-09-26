@@ -321,3 +321,21 @@ test('a session with no map is told how to start one', async () => {
   const lost = new Client('S9', '/w', () => []);
   await expect(runTool(lost, 'read_map', {})).rejects.toThrow(/eda serve/);
 });
+
+test('a person toggles a marker; the AI can read it but has no route to set one', async () => {
+  const n = (await person('POST', '/api/nodes', { parentId: 'n1', text: 'marked' })).json;
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'done' })).json.markers).toEqual(['done']);
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'nope' })).status).toBe(400);
+  expect(await runTool(claude, 'read_map', {})).toContain('markers: done');
+  // An AI edit carrying markers: the field is not read, so adopting it changes none.
+  const r = await fetch(`${base}/api/ai/suggest`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json', 'x-eda-session': 'S9' },
+    body: JSON.stringify({ kind: 'edit', nodeId: n.id, text: 'marked!', markers: ['flag'], reason: 'r' }),
+  });
+  const s = (await r.json()) as { id: string };
+  await person('POST', `/api/suggestions/${s.id}/accept`, {});
+  const after = (await person('GET', '/api/state')).json.doc.root.children.find((c: { id: string }) => c.id === n.id);
+  expect(after.text).toBe('marked!');
+  expect(after.markers).toEqual(['done']);
+});

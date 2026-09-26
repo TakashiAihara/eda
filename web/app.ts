@@ -1,4 +1,4 @@
-import { find, kaneoTaskUrl, type MapDoc, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
+import { find, kaneoTaskUrl, MARKERS, type MapDoc, type Marker, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
 import { icon } from './icons.ts';
 import { combo, show } from './keys.ts';
 import { clampZoom, pathTo, topicColours, visibleSelection } from './view.ts';
@@ -17,6 +17,8 @@ let state: State | undefined;
 let selected = 'n1';
 /** The node the map is drilled down to (XMind F6): drawn as the root. Not stored. */
 let drilled = 'n1';
+/** Levels shown under the drawn top (XMind's expand-to-level, Alt+1..9). View only, not stored (D-02). */
+let levels = Infinity;
 let zoom = clampZoom(Number(localStorage.getItem('eda-zoom')) || 1);
 
 /**
@@ -88,6 +90,25 @@ const onEnter = (fn: (v: string, key: string | undefined) => void) => (e: Event)
 const originLabel = (o: Origin): string =>
   o.by === 'human' ? '人が追加' : o.by === 'md-edit' ? 'map.md の編集を採用' : `AI の提案を採用${o.model ? ` (${o.model})` : ''}`;
 
+const markerLabel: Record<Marker, string> = {
+  'priority-1': '優先度 1',
+  'priority-2': '優先度 2',
+  'priority-3': '優先度 3',
+  doing: '進行中',
+  done: '完了',
+  flag: '旗',
+  star: '星',
+  question: '疑問',
+};
+
+/** A marker as drawn on a node: priorities as a numbered disc (as XMind draws them), the rest as icons. */
+function markerMark(m: Marker): HTMLElement {
+  const attrs = { class: `mark ${m}`, role: 'img', 'aria-label': markerLabel[m], title: markerLabel[m] };
+  return m.startsWith('priority-') ? h('span', { ...attrs, class: `mark pri ${m}` }, m.slice(-1)) : h('span', attrs, icon(m as Exclude<Marker, `priority-${string}`>));
+}
+
+const toggleMarker = (id: string, marker: Marker) => act('POST', `/api/nodes/${id}/markers`, { marker });
+
 function renderHead(s: State): void {
   const crumbs = pathTo(s.doc.root, drilled);
   $('head').replaceChildren(
@@ -96,6 +117,8 @@ function renderHead(s: State): void {
     ...(crumbs.length > 1
       ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', 'data-key': `crumb:${n.id}`, click: (e) => (e.preventDefault(), drill(n.id, false)) }, n.text)]))]
       : []),
+    // Shown while a level limit hides part of the map, with the way back.
+    ...(levels === Infinity ? [] : [h('button', { class: 'levels', 'data-key': 'levels', title: 'すべてのレベルを表示 (Alt+0)', click: () => setLevels(Infinity) }, `${levels} レベルまで表示中 ✕`)]),
     h('span', { class: 'meta', title: s.dir }, s.dir.split('/').pop() ?? s.dir),
     ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `${x.cwd ? `cd ${x.cwd} && ` : ''}claude --resume ${x.id}`))),
     // A mouse click does not move focus here, so the map keeps its keys after a zoom click;
@@ -123,6 +146,11 @@ function setZoom(z: number): void {
  * was (the render moves it only if a collapsed node now hides it); selecting the new top
  * instead would make Shift+F6 at the top level a jump to the root.
  */
+function setLevels(n: number): void {
+  levels = n;
+  if (state) render(state);
+}
+
 function drill(id: string, select = true): void {
   drilled = id;
   if (select) selected = id;
@@ -142,7 +170,7 @@ function renderMap(s: State): void {
   const top = viewTop(s);
   // Drilled into a collapsed node: show what is under it rather than a lone pill. View only.
   const drilledIn = top !== s.doc.root;
-  selected = visibleSelection(top, selected, drilledIn);
+  selected = visibleSelection(top, selected, drilledIn, levels);
   const pendingEdits = new Set(s.doc.suggestions.flatMap((x) => (x.kind === 'edit' ? [x.nodeId] : [])));
   const ghosts = (parentId: string): HTMLElement[] =>
     s.doc.suggestions
@@ -160,7 +188,8 @@ function renderMap(s: State): void {
 
   const colours = topicColours(top.children.map((c) => c.id));
   const item = (n: Node, depth = 0): HTMLElement => {
-    const shown = n.collapsed && !(depth === 0 && drilledIn) ? [] : n.children;
+    const cut = depth === levels;
+    const shown = cut || (n.collapsed && !(depth === 0 && drilledIn)) ? [] : n.children;
     const cls = ['node', depth === 0 ? 'root' : depth === 1 ? 'topic' : '', n.id === selected ? 'sel' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
       .filter(Boolean)
       .join(' ');
@@ -168,6 +197,7 @@ function renderMap(s: State): void {
       editing?.kind === 'rename' && editing.id === n.id
         ? editor(n.text)
         : h('button', { type: 'button', class: cls, 'data-id': n.id, title: originLabel(n.origin), 'aria-pressed': String(n.id === selected), click: () => select(n.id) },
+            ...(n.markers ?? []).map(markerMark),
             n.origin.by === 'ai' ? h('span', { class: 'tag ai', role: 'img', 'aria-label': 'AI の提案から採用' }, icon('ai')) : null,
             h('span', { class: 'text' }, n.text),
             tag('link', n.urls.length, `URL ${n.urls.length} 件`),
@@ -176,7 +206,10 @@ function renderMap(s: State): void {
           );
     // A main topic's colour, inherited by everything under it.
     const li = h('li', depth === 1 ? { style: `--branch: var(--b${colours.get(n.id) ?? 0})` } : {}, box);
-    if (n.children.length && !(depth === 0 && drilledIn)) {
+    if (n.children.length && cut) {
+      // Hidden by the level limit, not folded: this shows every level again rather than saving a fold.
+      li.append(h('button', { class: 'fold', title: 'すべてのレベルを表示 (Alt+0)', 'aria-label': 'すべてのレベルを表示', click: () => setLevels(Infinity) }, `+${n.children.length}`));
+    } else if (n.children.length && !(depth === 0 && drilledIn)) {
       li.append(
         h('button', { class: 'fold', title: n.collapsed ? '展開 (+)' : '折りたたむ (-)', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) },
           n.collapsed ? `+${n.children.length}` : icon('minus')),
@@ -211,6 +244,10 @@ function renderNode(s: State): void {
   $('node').replaceChildren(
     h('h2', {}, `ノード ${n.id} — ${originLabel(n.origin)}${n.editedBy ? ` / 本文は${originLabel(n.editedBy).replace('を採用', 'で変更')}` : ''}`),
     h('input', { value: n.text, 'data-draft': `${n.id}:text`, keydown: onEnter((v, k) => act('PATCH', base, { text: v }, [k, v])) }),
+    // Every marker as a toggle, pressed when the node has it.
+    h('div', { class: 'row markers', role: 'group', 'aria-label': 'マーカー' },
+      ...MARKERS.map((m) => h('button', { class: 'icon-btn', title: markerLabel[m], 'aria-label': markerLabel[m], 'aria-pressed': String(n.markers?.includes(m) ?? false), click: () => toggleMarker(n.id, m) }, markerMark(m))),
+    ),
     h('div', { class: 'row' }, h('input', { placeholder: '子ノードを追加 (Enter)', 'data-draft': `${n.id}:child`, keydown: onEnter((v, k) => act('POST', '/api/nodes', { parentId: n.id, text: v }, [k, v])) })),
     h('textarea', { placeholder: 'ノート', 'data-draft': `${n.id}:note`, change: (e) => act('PATCH', base, { note: val(e) }, [`${n.id}:note`, val(e)]) }, n.note ?? ''),
     h('h2', {}, 'URL'),
@@ -426,7 +463,7 @@ function open(kind: Editing['kind']): void {
 }
 
 /** The selected node and where it sits, as the key actions see it. */
-type Here = { n: Node; parent: Node | undefined; siblings: Node[]; i: number; isTop: boolean };
+type Here = { n: Node; parent: Node | undefined; siblings: Node[]; i: number; isTop: boolean; pressed: string };
 
 // Not on the drilled-down top: it shows its children whatever the flag says, so a fold there
 // would change the saved map with nothing moving on screen.
@@ -470,7 +507,15 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
   { combos: ['ArrowUp'], what: '前の兄弟へ', run: ({ siblings, i }) => siblings[i - 1] && select(siblings[i - 1]!.id) },
   { combos: ['ArrowDown'], what: '次の兄弟へ', run: ({ siblings, i }) => siblings[i + 1] && select(siblings[i + 1]!.id) },
   { combos: ['+', '='], what: '展開', run: ({ n, isTop }) => fold(n, false, isTop) },
+  { combos: ['1', '2', '3'], what: '優先度 1 / 2 / 3 を付ける・外す', run: ({ n, pressed }) => void toggleMarker(n.id, `priority-${pressed}` as Marker) },
+  { combos: ['d'], what: '進行中 → 完了 → なし', run: ({ n }) => void toggleMarker(n.id, n.markers?.includes('done') ? 'done' : n.markers?.includes('doing') ? 'done' : 'doing') },
+  { combos: ['f'], what: '旗を付ける・外す', run: ({ n }) => void toggleMarker(n.id, 'flag') },
   { combos: ['-'], what: '折りたたむ', run: ({ n, isTop }) => fold(n, true, isTop) },
+  {
+    combos: ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9', 'Alt+0'],
+    what: 'N レベルまで表示 (Alt+0 ですべて、表示だけで保存しない)',
+    run: ({ pressed }) => setLevels(Number(pressed.slice(-1)) || Infinity),
+  },
   { combos: ['F6'], what: 'このノードに絞って表示 (ドリルダウン)', run: ({ n }) => n.children.length && drill(n.id) },
   { combos: ['Shift+F6'], what: '1 段上に戻る (ドリルアップ)', run: () => state && drill(find(state.doc.root, drilled)?.parent?.id ?? state.doc.root.id, false) },
   { combos: ['Ctrl+=', 'Ctrl++'], what: '拡大', run: () => setZoom(zoom + 0.1) },
@@ -512,7 +557,7 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   const isTop = selected === drilled;
   const siblings = isTop || !hit.parent ? [hit.node] : hit.parent.children;
-  key.run({ n: hit.node, parent: hit.parent, siblings, i: siblings.findIndex((c) => c.id === selected), isTop });
+  key.run({ n: hit.node, parent: hit.parent, siblings, i: siblings.findIndex((c) => c.id === selected), isTop, pressed: combo(e) });
 });
 
 /** Adopt or reject from the map. Both buttons go dead on the first click: a second would 404. */
