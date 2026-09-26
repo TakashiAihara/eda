@@ -1,7 +1,7 @@
 import { find, kaneoTaskUrl, MARKERS, type MapDoc, type Marker, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
 import { icon } from './icons.ts';
 import { combo, show } from './keys.ts';
-import { clampZoom, deepest, pathTo, topicColours, visibleSelection } from './view.ts';
+import { clampZoom, deepest, pathTo, visibleSelection } from './view.ts';
 
 type State = { rev: number; dir: string; doc: MapDoc; kaneoHost: string | null };
 
@@ -205,7 +205,6 @@ function renderMap(s: State): void {
   const tag = (name: 'link' | 'task' | 'note', count: number, label: string) =>
     count ? h('span', { class: 'tag', title: label, role: 'img', 'aria-label': label }, icon(name), count > 1 ? String(count) : '') : null;
 
-  const colours = topicColours(top.children.map((c) => c.id));
   const item = (n: Node, depth = 0): HTMLElement => {
     // At the level limit. A collapsed node there keeps its own fold button: showing every level
     // would not open it.
@@ -225,8 +224,7 @@ function renderMap(s: State): void {
             tag('task', n.tasks.length, `kaneo タスク ${n.tasks.length} 件`),
             tag('note', n.note ? 1 : 0, 'ノートあり'),
           );
-    // A main topic's colour, inherited by everything under it.
-    const li = h('li', depth === 1 ? { style: `--branch: var(--b${colours.get(n.id) ?? 0})` } : {}, box);
+    const li = h('li', {}, box);
     const hiddenHere = cut ? n.children.length + waitingUnder(s, n.id) : 0;
     if (hiddenHere) {
       // Hidden by the level limit, not folded: this shows every level again rather than saving a fold.

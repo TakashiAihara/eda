@@ -26,18 +26,6 @@ export function visibleSelection(top: Node, id: string, topShowsChildren = false
 }
 
 /**
- * Palette slot of each main topic: its rank by creation (the number in its `n<seq>` id), mod 6.
- * Not the position, which recolours every later topic when one is inserted before them; not
- * the raw id, whose sequence is shared with suggestions and chat, so colours would repeat at
- * random. By rank, the first six topics always differ and an insert anywhere recolours nothing.
- * ponytail: deleting a topic still shifts the ones created after it; store a colour per node if that bites.
- */
-export function topicColours(ids: string[]): Map<string, number> {
-  const seq = (id: string): number => Number(id.replace(/\D/g, ''));
-  return new Map([...ids].sort((a, b) => seq(a) - seq(b)).map((id, i) => [id, i % 6]));
-}
-
-/**
  * The deepest level under `n` with something drawn on it: a child, or a suggestion waiting
  * under a node (`waiting`), to tell whether a level limit hides anything. `showChildren` is
  * false for a collapsed node, except a drilled-down top, which shows its children anyway.
