@@ -49,7 +49,7 @@ Inside the session, say what you want to think about; the session runs `eda serv
 | Ctrl+= (or Ctrl++) / Ctrl+- / Ctrl+0 | zoom the map in / out / reset (also the buttons at the top right; Cmd on macOS) |
 | ? | the key sheet |
 
-Suggested nodes have a dashed border: click to adopt, ✕ to reject. Each main topic (a child of the root) is coloured by creation order: the first six always differ and adding one never recolours the others, while deleting one shifts the colours of those created after it; nodes adopted from an AI suggestion carry a ✦ mark.
+Suggested nodes have a dashed border: click to adopt, ✕ to reject. Nodes adopted from an AI suggestion carry a ✦ mark.
 
 ## Files
 

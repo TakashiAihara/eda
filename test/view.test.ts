@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { Node } from '../src/map.ts';
-import { clampZoom, deepest, pathTo, topicColours, visibleSelection } from '../web/view.ts';
+import { clampZoom, deepest, pathTo, visibleSelection } from '../web/view.ts';
 
 const n = (id: string, children: Node[] = [], collapsed = false): Node => ({ id, text: id, children, urls: [], tasks: [], origin: { by: 'human' }, ...(collapsed ? { collapsed } : {}) });
 
@@ -41,21 +41,6 @@ test('a depth limit hides what is below it, and the selection moves up to that l
   expect(visibleSelection(open, 'n5', false, 1)).toBe('n5');
   // A collapsed node above the limit still wins.
   expect(visibleSelection(map, 'n4', false, 3)).toBe('n2');
-});
-
-test('topic colours follow creation order, not position, and differ for the first six', () => {
-  const c = topicColours(['n30', 'n4', 'n17']);
-  expect([c.get('n4'), c.get('n17'), c.get('n30')]).toEqual([0, 1, 2]);
-  // An insert before the others, created later, takes the next colour and moves none.
-  const after = topicColours(['n31', 'n30', 'n4', 'n17']);
-  expect([after.get('n4'), after.get('n17'), after.get('n30'), after.get('n31')]).toEqual([0, 1, 2, 3]);
-  // n9 sorts before n10 as a number, not as a string.
-  expect(topicColours(['n10', 'n9']).get('n9')).toBe(0);
-  // Out of order on purpose, so a position-based colour would fail these.
-  const six = topicColours(['n20', 'n2', 'n14', 'n5', 'n11', 'n8']);
-  expect(['n2', 'n5', 'n8', 'n11', 'n14', 'n20'].map((id) => six.get(id))).toEqual([0, 1, 2, 3, 4, 5]);
-  // The palette has six slots: the seventh wraps to the first.
-  expect(topicColours(['n1', 'n7', 'n2', 'n3', 'n4', 'n5', 'n6']).get('n7')).toBe(0);
 });
 
 test('deepest counts levels with something drawn: children, and suggestions waiting under a node', () => {
