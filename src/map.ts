@@ -216,14 +216,16 @@ export function removeTask(doc: MapDoc, id: string, task: string): void {
   n.tasks = n.tasks.filter((t) => t.task !== task);
 }
 
-/** Put a marker on a node, replacing any of its group, or take it off if it is already there. */
-export function toggleMarker(doc: MapDoc, id: string, marker: string): Node {
+/**
+ * Put a marker on a node (`on`), replacing any of its group, or take it off. Explicit rather than
+ * a toggle, so a repeated or doubled request lands on the same state, like the URL and task routes.
+ */
+export function setMarker(doc: MapDoc, id: string, marker: string, on: boolean): Node {
   const n = must(doc, id).node;
   if (!(MARKERS as readonly string[]).includes(marker)) throw new MapError(`unknown marker ${marker} (one of ${MARKERS.join(', ')})`);
   const m = marker as Marker;
-  const had = n.markers?.includes(m) ?? false;
-  const kept = (n.markers ?? []).filter((x) => markerGroup(x) !== markerGroup(m));
-  const next = had ? kept : [...kept, m].sort((a, b) => MARKERS.indexOf(a) - MARKERS.indexOf(b));
+  const kept = (n.markers ?? []).filter((x) => (on ? markerGroup(x) !== markerGroup(m) : x !== m));
+  const next = on ? [...kept, m].sort((a, b) => MARKERS.indexOf(a) - MARKERS.indexOf(b)) : kept;
   if (next.length) n.markers = next;
   else delete n.markers;
   return n;

@@ -16,7 +16,7 @@ import {
   removeUrl,
   suggest,
   toMarkdown,
-  toggleMarker,
+  setMarker,
   toOutlineForAi,
 } from '../src/map.ts';
 
@@ -243,29 +243,35 @@ test('a node can be inserted at a sibling index (Enter / Shift+Enter)', () => {
   expect(d.root.children.map((c) => c.text)).toEqual(['a', 'b', 'c', 'z']);
 });
 
-test('markers toggle, and one of a group replaces the other', () => {
+test('markers go on and off, and one of a group replaces the other', () => {
   const d = newMap('plan');
   const n = addChild(d, 'n1', 'hotel');
-  toggleMarker(d, n.id, 'flag');
-  toggleMarker(d, n.id, 'priority-2');
-  toggleMarker(d, n.id, 'doing');
+  setMarker(d, n.id, 'flag', true);
+  setMarker(d, n.id, 'priority-2', true);
+  setMarker(d, n.id, 'doing', true);
   // Kept in the fixed order, whatever order they were set in.
   expect(n.markers).toEqual(['priority-2', 'doing', 'flag']);
-  toggleMarker(d, n.id, 'priority-1');
-  toggleMarker(d, n.id, 'done');
+  setMarker(d, n.id, 'priority-1', true);
+  setMarker(d, n.id, 'done', true);
   expect(n.markers).toEqual(['priority-1', 'done', 'flag']);
   // flag and star are groups of their own: both can be on.
-  toggleMarker(d, n.id, 'star');
+  setMarker(d, n.id, 'star', true);
   expect(n.markers).toEqual(['priority-1', 'done', 'flag', 'star']);
-  for (const m of ['priority-1', 'done', 'flag', 'star']) toggleMarker(d, n.id, m);
+  // Repeating a request lands on the same state (a double key press, a retry).
+  setMarker(d, n.id, 'star', true);
+  expect(n.markers).toEqual(['priority-1', 'done', 'flag', 'star']);
+  // Taking one off leaves the rest of its group alone, and off twice is still off.
+  setMarker(d, n.id, 'priority-2', false);
+  expect(n.markers).toEqual(['priority-1', 'done', 'flag', 'star']);
+  for (const m of ['priority-1', 'done', 'flag', 'star', 'star']) setMarker(d, n.id, m, false);
   expect('markers' in n).toBe(false);
 });
 
 test('an unknown marker is refused, and the AI reads the markers', () => {
   const d = newMap('plan');
   const n = addChild(d, 'n1', 'hotel');
-  expect(() => toggleMarker(d, n.id, 'urgent')).toThrow(/unknown marker/);
+  expect(() => setMarker(d, n.id, 'urgent', true)).toThrow(/unknown marker/);
   expect(n.markers).toBeUndefined();
-  toggleMarker(d, n.id, 'question');
+  setMarker(d, n.id, 'question', true);
   expect(toOutlineForAi(d)).toContain(`[${n.id}] hotel  (markers: question)`);
 });

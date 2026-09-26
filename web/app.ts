@@ -107,7 +107,8 @@ function markerMark(m: Marker): HTMLElement {
   return m.startsWith('priority-') ? h('span', { ...attrs, class: `mark pri ${m}` }, m.slice(-1)) : h('span', attrs, icon(m as Exclude<Marker, `priority-${string}`>));
 }
 
-const toggleMarker = (id: string, marker: Marker) => act('POST', `/api/nodes/${id}/markers`, { marker });
+/** `on` from the state drawn now; sent explicitly, so a doubled key press sets the same thing twice. */
+const setMarker = (n: Node, marker: Marker, on = !(n.markers?.includes(marker) ?? false)) => act('POST', `/api/nodes/${n.id}/markers`, { marker, on });
 
 function renderHead(s: State): void {
   const crumbs = pathTo(s.doc.root, drilled);
@@ -118,7 +119,7 @@ function renderHead(s: State): void {
       ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', 'data-key': `crumb:${n.id}`, click: (e) => (e.preventDefault(), drill(n.id, false)) }, n.text)]))]
       : []),
     // Shown while a level limit hides part of the map, with the way back.
-    ...(levels === Infinity ? [] : [h('button', { class: 'levels', 'data-key': 'levels', title: 'すべてのレベルを表示 (Alt+0)', click: () => setLevels(Infinity) }, `${levels} レベルまで表示中 ✕`)]),
+    ...(levels >= deepest(viewTop(s)) ? [] : [h('button', { class: 'levels', 'data-key': 'levels', title: 'すべてのレベルを表示 (Alt+0)', click: () => setLevels(Infinity) }, `${levels} レベルまで表示中 ✕`)]),
     h('span', { class: 'meta', title: s.dir }, s.dir.split('/').pop() ?? s.dir),
     ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `${x.cwd ? `cd ${x.cwd} && ` : ''}claude --resume ${x.id}`))),
     // A mouse click does not move focus here, so the map keeps its keys after a zoom click;
@@ -146,10 +147,6 @@ function setZoom(z: number): void {
  * was (the render moves it only if a collapsed node now hides it); selecting the new top
  * instead would make Shift+F6 at the top level a jump to the root.
  */
-function setLevels(n: number): void {
-  levels = n;
-  if (state) render(state);
-}
 
 function drill(id: string, select = true): void {
   drilled = id;
@@ -158,6 +155,17 @@ function drill(id: string, select = true): void {
   (document.activeElement as HTMLElement | null)?.blur();
   if (state) render(state);
 }
+
+function setLevels(n: number): void {
+  levels = n;
+  if (state) render(state);
+}
+
+/** How far below the drawn root a node sits (the root is 0). */
+const levelOf = (s: State, id: string): number => pathTo(viewTop(s), id).length - 1;
+
+/** The deepest level under `n`, to tell whether a level limit hides anything. */
+const deepest = (n: Node): number => (n.collapsed || !n.children.length ? 0 : 1 + Math.max(...n.children.map(deepest)));
 
 /** The node drawn as the root: the drilled-down one, or the map's root once that is gone. */
 function viewTop(s: State): Node {
@@ -188,7 +196,9 @@ function renderMap(s: State): void {
 
   const colours = topicColours(top.children.map((c) => c.id));
   const item = (n: Node, depth = 0): HTMLElement => {
-    const cut = depth === levels;
+    // At the level limit. A collapsed node there keeps its own fold button: showing every level
+    // would not open it.
+    const cut = depth === levels && !n.collapsed;
     const shown = cut || (n.collapsed && !(depth === 0 && drilledIn)) ? [] : n.children;
     const cls = ['node', depth === 0 ? 'root' : depth === 1 ? 'topic' : '', n.id === selected ? 'sel' : '', pendingEdits.has(n.id) ? 'pending-edit' : '']
       .filter(Boolean)
@@ -222,7 +232,9 @@ function renderMap(s: State): void {
       if (editing?.kind === 'after' && editing.id === c.id) kids.push(h('li', {}, editor('')));
     }
     if (editing?.kind === 'child' && editing.id === n.id) kids.push(h('li', {}, editor('')));
-    kids.push(...ghosts(n.id));
+    // Not at the level limit: adopting one there would put a node straight out of sight.
+    // The sidebar still lists every candidate.
+    if (!cut) kids.push(...ghosts(n.id));
     if (kids.length) li.append(h('ul', {}, ...kids));
     return li;
   };
@@ -246,7 +258,7 @@ function renderNode(s: State): void {
     h('input', { value: n.text, 'data-draft': `${n.id}:text`, keydown: onEnter((v, k) => act('PATCH', base, { text: v }, [k, v])) }),
     // Every marker as a toggle, pressed when the node has it.
     h('div', { class: 'row markers', role: 'group', 'aria-label': 'マーカー' },
-      ...MARKERS.map((m) => h('button', { class: 'icon-btn', title: markerLabel[m], 'aria-label': markerLabel[m], 'aria-pressed': String(n.markers?.includes(m) ?? false), click: () => toggleMarker(n.id, m) }, markerMark(m))),
+      ...MARKERS.map((m) => h('button', { class: 'icon-btn', title: markerLabel[m], 'aria-label': markerLabel[m], 'aria-pressed': String(n.markers?.includes(m) ?? false), click: () => setMarker(n, m) }, markerMark(m))),
     ),
     h('div', { class: 'row' }, h('input', { placeholder: '子ノードを追加 (Enter)', 'data-draft': `${n.id}:child`, keydown: onEnter((v, k) => act('POST', '/api/nodes', { parentId: n.id, text: v }, [k, v])) })),
     h('textarea', { placeholder: 'ノート', 'data-draft': `${n.id}:note`, change: (e) => act('PATCH', base, { note: val(e) }, [`${n.id}:note`, val(e)]) }, n.note ?? ''),
@@ -449,6 +461,11 @@ function open(kind: Editing['kind']): void {
   // The root, and the drilled-down top, show no siblings; Enter on them adds a child, as in XMind.
   const top = !hit.parent || selected === drilled;
   editing = kind !== 'child' && kind !== 'rename' && top ? { kind: 'child', id: selected } : { kind, id: selected };
+  // A child of a node at the level limit would be saved out of sight: show one more level.
+  if (editing.kind === 'child') {
+    const at = levelOf(state, selected);
+    if (at >= levels) levels = at + 1;
+  }
 
   renderMap(state);
   // Focused synchronously: keys typed right after Tab would otherwise land nowhere.
@@ -464,6 +481,8 @@ function open(kind: Editing['kind']): void {
 
 /** The selected node and where it sits, as the key actions see it. */
 type Here = { n: Node; parent: Node | undefined; siblings: Node[]; i: number; isTop: boolean; pressed: string };
+
+const atLimit = (s: State, n: Node): boolean => !n.collapsed && n.children.length > 0 && levelOf(s, n.id) === levels;
 
 // Not on the drilled-down top: it shows its children whatever the flag says, so a fold there
 // would change the saved map with nothing moving on screen.
@@ -506,15 +525,17 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
   { combos: ['ArrowRight'], what: '最初の子へ', run: ({ n, isTop }) => (!n.collapsed || (isTop && n !== state?.doc.root)) && n.children[0] && select(n.children[0].id) },
   { combos: ['ArrowUp'], what: '前の兄弟へ', run: ({ siblings, i }) => siblings[i - 1] && select(siblings[i - 1]!.id) },
   { combos: ['ArrowDown'], what: '次の兄弟へ', run: ({ siblings, i }) => siblings[i + 1] && select(siblings[i + 1]!.id) },
-  { combos: ['+', '='], what: '展開', run: ({ n, isTop }) => fold(n, false, isTop) },
-  { combos: ['1', '2', '3'], what: '優先度 1 / 2 / 3 を付ける・外す', run: ({ n, pressed }) => void toggleMarker(n.id, `priority-${pressed}` as Marker) },
-  { combos: ['d'], what: '進行中 → 完了 → なし', run: ({ n }) => void toggleMarker(n.id, n.markers?.includes('done') ? 'done' : n.markers?.includes('doing') ? 'done' : 'doing') },
-  { combos: ['f'], what: '旗を付ける・外す', run: ({ n }) => void toggleMarker(n.id, 'flag') },
-  { combos: ['-'], what: '折りたたむ', run: ({ n, isTop }) => fold(n, true, isTop) },
+  // At the level limit a node shows no children without being folded: + shows one more level,
+  // and - has nothing to fold on screen, so it saves nothing.
+  { combos: ['+', '='], what: '展開', run: ({ n, isTop }) => (state && atLimit(state, n) ? setLevels(levels + 1) : fold(n, false, isTop)) },
+  { combos: ['1', '2', '3'], what: '優先度 1 / 2 / 3 を付ける・外す', run: ({ n, pressed }) => void setMarker(n, `priority-${pressed}` as Marker) },
+  { combos: ['d'], what: '進行中 → 完了 → なし', run: ({ n }) => void (n.markers?.includes('done') ? setMarker(n, 'done', false) : n.markers?.includes('doing') ? setMarker(n, 'done', true) : setMarker(n, 'doing', true)) },
+  { combos: ['f'], what: '旗を付ける・外す', run: ({ n }) => void setMarker(n, 'flag') },
+  { combos: ['-'], what: '折りたたむ', run: ({ n, isTop }) => (state && atLimit(state, n) ? undefined : fold(n, true, isTop)) },
   {
     combos: ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9', 'Alt+0'],
     what: 'N レベルまで表示 (Alt+0 ですべて、表示だけで保存しない)',
-    run: ({ pressed }) => setLevels(Number(pressed.slice(-1)) || Infinity),
+    run: ({ pressed }) => setLevels(pressed === 'Alt+0' ? Infinity : Number(pressed.slice(-1))),
   },
   { combos: ['F6'], what: 'このノードに絞って表示 (ドリルダウン)', run: ({ n }) => n.children.length && drill(n.id) },
   { combos: ['Shift+F6'], what: '1 段上に戻る (ドリルアップ)', run: () => state && drill(find(state.doc.root, drilled)?.parent?.id ?? state.doc.root.id, false) },

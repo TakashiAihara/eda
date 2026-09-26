@@ -1,8 +1,8 @@
 /**
  * The few icons eda draws, as inline SVG paths on a 24-unit grid. Inline rather than an
- * icon package: eight shapes do not justify a dependency.
+ * icon package: a dozen shapes do not justify a dependency.
  *
- * `ai` and `doing` (a half-filled circle) are eda's own. `keys` is drawn after Lucide's keyboard
+ * `ai` and `doing` (a circle with its right half hatched) are eda's own. `keys` is drawn after Lucide's keyboard
  * (ISC). The rest are Feather's link, check-square, file-text, plus, minus, x, flag, star,
  * help-circle and check-circle (MIT, Cole Bemis), as Lucide also carries them. `ICONS-LICENSE`
  * next to this file is Lucide's licence, which holds both notices.

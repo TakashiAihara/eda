@@ -322,10 +322,13 @@ test('a session with no map is told how to start one', async () => {
   await expect(runTool(lost, 'read_map', {})).rejects.toThrow(/eda serve/);
 });
 
-test('a person toggles a marker; the AI can read it but has no route to set one', async () => {
+test('a person toggles a marker; the AI reads it, and its suggestions cannot carry one', async () => {
   const n = (await person('POST', '/api/nodes', { parentId: 'n1', text: 'marked' })).json;
-  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'done' })).json.markers).toEqual(['done']);
-  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'nope' })).status).toBe(400);
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'done', on: true })).json.markers).toEqual(['done']);
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'nope', on: true })).status).toBe(400);
+  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'flag' })).status).toBe(400);
+  // Saved, not only held in memory.
+  expect(JSON.stringify(loadMap(dir)!.root)).toContain('"markers":["done"]');
   expect(await runTool(claude, 'read_map', {})).toContain('markers: done');
   // An AI edit carrying markers: the field is not read, so adopting it changes none.
   const r = await fetch(`${base}/api/ai/suggest`, {

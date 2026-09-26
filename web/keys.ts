@@ -7,7 +7,8 @@
 export function combo(e: { key: string; code?: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }): string {
   // Option+1 on a Mac types ¡: with Alt, a digit key is read from its position instead.
   const digit = e.altKey && e.code?.startsWith('Digit') ? e.code.slice(5) : undefined;
-  const key = digit ?? (e.key === ' ' ? 'Space' : e.key);
+  // A letter is read in lower case, so CapsLock does not turn d into D.
+  const key = digit ?? (e.key === ' ' ? 'Space' : /^[A-Za-z]$/.test(e.key) ? e.key.toLowerCase() : e.key);
   return `${e.ctrlKey || e.metaKey ? 'Ctrl+' : ''}${e.altKey ? 'Alt+' : ''}${e.shiftKey && key.length > 1 ? 'Shift+' : ''}${key}`;
 }
 
