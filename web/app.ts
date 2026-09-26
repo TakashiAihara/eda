@@ -119,7 +119,7 @@ function renderHead(s: State): void {
       ? [h('nav', { class: 'crumbs', 'aria-label': 'ドリルダウン中' }, ...crumbs.flatMap((n, i) => [i ? ' › ' : '', i === crumbs.length - 1 ? h('b', {}, n.text) : h('a', { href: '#', 'data-key': `crumb:${n.id}`, click: (e) => (e.preventDefault(), drill(n.id, false)) }, n.text)]))]
       : []),
     // Shown while a level limit hides part of the map, with the way back.
-    ...(levels >= deepest(viewTop(s)) ? [] : [h('button', { class: 'levels', 'data-key': 'levels', title: 'すべてのレベルを表示 (Alt+0)', click: () => setLevels(Infinity) }, `${levels} レベルまで表示中 ✕`)]),
+    ...(!levelsHide(s) ? [] : [h('button', { class: 'levels', 'data-key': 'levels', title: 'すべてのレベルを表示 (Alt+0)', click: () => setLevels(Infinity) }, `${levels} レベルまで表示中 ✕`)]),
     h('span', { class: 'meta', title: s.dir }, s.dir.split('/').pop() ?? s.dir),
     ...s.doc.sessions.map((x) => h('span', { class: 'meta' }, 'resume: ', h('code', {}, `${x.cwd ? `cd ${x.cwd} && ` : ''}claude --resume ${x.id}`))),
     // A mouse click does not move focus here, so the map keeps its keys after a zoom click;
@@ -147,7 +147,6 @@ function setZoom(z: number): void {
  * was (the render moves it only if a collapsed node now hides it); selecting the new top
  * instead would make Shift+F6 at the top level a jump to the root.
  */
-
 function drill(id: string, select = true): void {
   drilled = id;
   if (select) selected = id;
@@ -164,8 +163,18 @@ function setLevels(n: number): void {
 /** How far below the drawn root a node sits (the root is 0). */
 const levelOf = (s: State, id: string): number => pathTo(viewTop(s), id).length - 1;
 
-/** The deepest level under `n`, to tell whether a level limit hides anything. */
-const deepest = (n: Node): number => (n.collapsed || !n.children.length ? 0 : 1 + Math.max(...n.children.map(deepest)));
+/** Add suggestions waiting under a node: drawn as ghosts, so a level limit can hide them too. */
+const waitingUnder = (s: State, id: string): number => s.doc.suggestions.filter((x) => x.kind === 'add' && x.parentId === id).length;
+
+/** The deepest level under `n` with something drawn on it (a child, or a ghost), to tell whether a level limit hides anything. */
+const deepest = (s: State, n: Node, showChildren = !n.collapsed): number =>
+  Math.max(0, waitingUnder(s, n.id) ? 1 : 0, ...(showChildren ? n.children : []).map((c) => 1 + deepest(s, c)));
+
+/** Whether the level limit hides anything. A drilled-down top shows its children even when collapsed. */
+function levelsHide(s: State): boolean {
+  const t = viewTop(s);
+  return levels < deepest(s, t, !t.collapsed || t !== s.doc.root);
+}
 
 /** The node drawn as the root: the drilled-down one, or the map's root once that is gone. */
 function viewTop(s: State): Node {
@@ -216,9 +225,11 @@ function renderMap(s: State): void {
           );
     // A main topic's colour, inherited by everything under it.
     const li = h('li', depth === 1 ? { style: `--branch: var(--b${colours.get(n.id) ?? 0})` } : {}, box);
-    if (n.children.length && cut) {
+    const hiddenHere = cut ? n.children.length + waitingUnder(s, n.id) : 0;
+    if (hiddenHere) {
       // Hidden by the level limit, not folded: this shows every level again rather than saving a fold.
-      li.append(h('button', { class: 'fold', title: 'すべてのレベルを表示 (Alt+0)', 'aria-label': 'すべてのレベルを表示', click: () => setLevels(Infinity) }, `+${n.children.length}`));
+      // Counts waiting suggestions too, so a ghost hidden here is not hidden without a trace.
+      li.append(h('button', { class: 'fold', title: 'すべてのレベルを表示 (Alt+0)', 'aria-label': 'すべてのレベルを表示', click: () => setLevels(Infinity) }, `+${hiddenHere}`));
     } else if (n.children.length && !(depth === 0 && drilledIn)) {
       li.append(
         h('button', { class: 'fold', title: n.collapsed ? '展開 (+)' : '折りたたむ (-)', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => act('PATCH', `/api/nodes/${n.id}`, { collapsed: !n.collapsed }) },
@@ -464,7 +475,10 @@ function open(kind: Editing['kind']): void {
   // A child of a node at the level limit would be saved out of sight: show one more level.
   if (editing.kind === 'child') {
     const at = levelOf(state, selected);
-    if (at >= levels) levels = at + 1;
+    if (at >= levels) {
+      levels = at + 1;
+      renderHead(state);
+    }
   }
 
   renderMap(state);
@@ -527,7 +541,17 @@ const KEYS: { combos: string[]; what: string; run: (x: Here) => void }[] = [
   { combos: ['ArrowDown'], what: '次の兄弟へ', run: ({ siblings, i }) => siblings[i + 1] && select(siblings[i + 1]!.id) },
   // At the level limit a node shows no children without being folded: + shows one more level,
   // and - has nothing to fold on screen, so it saves nothing.
-  { combos: ['+', '='], what: '展開', run: ({ n, isTop }) => (state && atLimit(state, n) ? setLevels(levels + 1) : fold(n, false, isTop)) },
+  {
+    combos: ['+', '='],
+    what: '展開',
+    run: ({ n, isTop }) => {
+      if (!state) return;
+      // A collapsed node at the limit needs both: unfolded (saved) and one more level (view).
+      if (n.collapsed) void fold(n, false, isTop);
+      if (levelOf(state, n.id) === levels && n.children.length) setLevels(levels + 1);
+      else if (!n.collapsed) void fold(n, false, isTop);
+    },
+  },
   { combos: ['1', '2', '3'], what: '優先度 1 / 2 / 3 を付ける・外す', run: ({ n, pressed }) => void setMarker(n, `priority-${pressed}` as Marker) },
   { combos: ['d'], what: '進行中 → 完了 → なし', run: ({ n }) => void (n.markers?.includes('done') ? setMarker(n, 'done', false) : n.markers?.includes('doing') ? setMarker(n, 'done', true) : setMarker(n, 'doing', true)) },
   { combos: ['f'], what: '旗を付ける・外す', run: ({ n }) => void setMarker(n, 'flag') },

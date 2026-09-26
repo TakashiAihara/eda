@@ -260,10 +260,12 @@ test('markers go on and off, and one of a group replaces the other', () => {
   // Repeating a request lands on the same state (a double key press, a retry).
   setMarker(d, n.id, 'star', true);
   expect(n.markers).toEqual(['priority-1', 'done', 'flag', 'star']);
-  // Taking one off leaves the rest of its group alone, and off twice is still off.
+  // Taking one off leaves the others alone; taking off one that is not there changes nothing.
+  setMarker(d, n.id, 'priority-1', false);
+  expect(n.markers).toEqual(['done', 'flag', 'star']);
   setMarker(d, n.id, 'priority-2', false);
-  expect(n.markers).toEqual(['priority-1', 'done', 'flag', 'star']);
-  for (const m of ['priority-1', 'done', 'flag', 'star', 'star']) setMarker(d, n.id, m, false);
+  expect(n.markers).toEqual(['done', 'flag', 'star']);
+  for (const m of ['done', 'flag', 'star', 'star']) setMarker(d, n.id, m, false);
   expect('markers' in n).toBe(false);
 });
 
