@@ -166,8 +166,6 @@ const levelOf = (s: State, id: string): number => pathTo(viewTop(s), id).length 
 /** Add suggestions waiting under a node: drawn as ghosts, so a level limit can hide them too. */
 const waitingUnder = (s: State, id: string): number => s.doc.suggestions.filter((x) => x.kind === 'add' && x.parentId === id).length;
 
-
-
 /** Whether the level limit hides anything. A drilled-down top shows its children even when collapsed. */
 function levelsHide(s: State): boolean {
   const t = viewTop(s);
@@ -231,7 +229,8 @@ function renderMap(s: State): void {
     } else if (n.children.length && !(depth === 0 && drilledIn)) {
       li.append(
         h('button', { class: 'fold', title: n.collapsed ? '展開 (+)' : '折りたたむ (-)', 'aria-label': n.collapsed ? '子ノードを展開' : '子ノードを折りたたむ', click: () => (n.collapsed ? expand(n, false) : act('PATCH', `/api/nodes/${n.id}`, { collapsed: true })) },
-          n.collapsed ? `+${n.children.length}` : icon('minus')),
+          // Counts a suggestion waiting under it when the level limit hides that too.
+          n.collapsed ? `+${n.children.length + (depth === levels ? waitingUnder(s, n.id) : 0)}` : icon('minus')),
       );
     }
     const kids: HTMLElement[] = [];
@@ -504,7 +503,7 @@ function expand(n: Node, isTop: boolean): void {
   if (levelOf(state, n.id) === levels && n.children.length + waitingUnder(state, n.id)) setLevels(levels + 1);
 }
 
-const atLimit = (s: State, n: Node): boolean => !n.collapsed && n.children.length + waitingUnder(s, n.id) > 0 && levelOf(s, n.id) === levels;
+const atLimit = (s: State, n: Node): boolean => !n.collapsed && n.children.length > 0 && levelOf(s, n.id) === levels;
 
 // Not on the drilled-down top: it shows its children whatever the flag says, so a fold there
 // would change the saved map with nothing moving on screen.

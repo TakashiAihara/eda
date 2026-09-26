@@ -66,6 +66,8 @@ test('deepest counts levels with something drawn: children, and suggestions wait
   // A suggestion waiting under a leaf adds a level; so does one under a collapsed node.
   expect(deepest(open, (id) => (id === 'n3' ? 1 : 0))).toBe(3);
   expect(deepest(map, (id) => (id === 'n2' ? 1 : 0))).toBe(2);
+  // One under a node that a collapsed ancestor hides does not count.
+  expect(deepest(map, (id) => (id === 'n3' ? 1 : 0))).toBe(1);
   // A collapsed node hides its children, unless it is a drilled-down top that shows them.
   expect(deepest(map, none)).toBe(1);
   expect(deepest(map.children[0]!, none)).toBe(0);

@@ -326,7 +326,8 @@ test('a person sets and clears a marker; the AI reads it, and its suggestions ca
   const n = (await person('POST', '/api/nodes', { parentId: 'n1', text: 'marked' })).json;
   expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'done', on: true })).json.markers).toEqual(['done']);
   expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'nope', on: true })).status).toBe(400);
-  expect((await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'flag' })).json.error).toMatch(/on \(true \/ false\) is required/);
+  const noOn = await person('POST', `/api/nodes/${n.id}/markers`, { marker: 'flag' });
+  expect([noOn.status, noOn.json.error]).toEqual([400, 'on (true / false) is required']);
   // Saved, not only held in memory.
   expect(JSON.stringify(loadMap(dir)!.root)).toContain('"markers":["done"]');
   // on: false goes through the route too.
