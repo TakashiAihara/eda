@@ -107,8 +107,14 @@ function markerMark(m: Marker): HTMLElement {
   return m.startsWith('priority-') ? h('span', { ...attrs, class: `mark pri ${m}` }, m.slice(-1)) : h('span', attrs, icon(m as Exclude<Marker, `priority-${string}`>));
 }
 
-/** `on` from the state drawn now; sent explicitly, so a doubled key press sets the same thing twice. */
-const setMarker = (n: Node, marker: Marker, on = !(n.markers?.includes(marker) ?? false)) => act('POST', `/api/nodes/${n.id}/markers`, { marker, on });
+/**
+ * `on` from the state drawn now; sent explicitly, so a doubled key press sets the same thing twice.
+ * Queued one after another: two presses in flight could otherwise land in the other order
+ * (priority 1 then 2, saved as 1).
+ */
+let markerQueue: Promise<unknown> = Promise.resolve();
+const setMarker = (n: Node, marker: Marker, on = !(n.markers?.includes(marker) ?? false)) =>
+  (markerQueue = markerQueue.then(() => act('POST', `/api/nodes/${n.id}/markers`, { marker, on })).catch(() => {}));
 
 function renderHead(s: State): void {
   const crumbs = pathTo(s.doc.root, drilled);
