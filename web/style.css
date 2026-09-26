@@ -14,6 +14,7 @@
   --pri3: #1864ab;
   --pri-text: #fff;
   --doing: #1971c2;
+  --done: #2f9e44;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -32,6 +33,7 @@
     --pri3: #74c0fc;
     --pri-text: #1b1c1a;
     --doing: #74c0fc;
+    --done: #69db7c;
   }
 }
 * { box-sizing: border-box; }
@@ -77,7 +79,7 @@ a { color: var(--accent); word-break: break-all; }
 .node { font: inherit; color: inherit; text-align: left; background: var(--card); border: 1.5px solid var(--line); border-radius: 8px; padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 360px; display: inline-flex; align-items: center; gap: 5px; }
 .node .text { overflow: hidden; text-overflow: ellipsis; }
 .node.root { font-weight: 700; font-size: 16px; padding: 8px 20px; border-radius: 999px; background: var(--accent); border-color: var(--accent); color: var(--bg); }
-.node.topic { font-weight: 600; font-size: 15px; padding: 5px 14px; border-width: 2px; background: var(--card); }
+.node.topic { font-weight: 600; font-size: 15px; padding: 5px 14px; border-width: 2px; }
 .node.sel { outline: 2.5px solid var(--fg); outline-offset: 2px; }
 .node .tag { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 1px; }
 .node .tag.ai { color: var(--ai); }
@@ -93,7 +95,7 @@ a { color: var(--accent); word-break: break-all; }
 .mark.priority-1 { background: var(--pri1); }
 .mark.priority-2 { background: var(--pri2); }
 .mark.priority-3 { background: var(--pri3); }
-.mark.done { color: var(--accent); }
+.mark.done { color: var(--done); }
 .mark.doing { color: var(--doing); }
 .mark.flag { color: var(--danger); }
 .mark.star { color: var(--ghost); }

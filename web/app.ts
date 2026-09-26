@@ -205,7 +205,6 @@ function renderMap(s: State): void {
   const tag = (name: 'link' | 'task' | 'note', count: number, label: string) =>
     count ? h('span', { class: 'tag', title: label, role: 'img', 'aria-label': label }, icon(name), count > 1 ? String(count) : '') : null;
 
-
   const item = (n: Node, depth = 0): HTMLElement => {
     // At the level limit. A collapsed node there keeps its own fold button: showing every level
     // would not open it.

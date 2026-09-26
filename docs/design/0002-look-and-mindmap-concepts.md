@@ -1,6 +1,6 @@
 # Look, icons, keys, and what to take from XMind / MindMeister
 
-Status: slice 1 implemented (PR #8). Slice 2 (markers, level limit) implemented after the owner's decisions: a fixed marker set, the level limit view-only. Slice 3 (relationships, boundaries) is wanted but deferred (kaneo eda#42).
+Status: slice 1 implemented (PR #8); its branch colours removed again (PR #11). Slice 2 (markers, level limit) implemented after the owner's decisions: a fixed marker set, the level limit view-only. Slice 3 (relationships, boundaries) is wanted but deferred (kaneo eda#42).
 
 ## Background
 
@@ -10,7 +10,7 @@ Status: slice 1 implemented (PR #8). Slice 2 (markers, level limit) implemented 
 
 ## Conclusion
 
-- Slice 1 (this PR) changes only the browser: inline SVG icons, a key sheet, drill-down, and zoom. Branch colours came in with it and were taken out again (see below). No field is added to `eda.json`.
+- Slice 1 (PR #8) changes only the browser: inline SVG icons, a key sheet, drill-down, and zoom. Branch colours came in with it and were taken out again (see below). No field is added to `eda.json`.
 - Anything that needs a new field on `Node` (markers, relationships, boundaries) is a later slice, because a field name is a storage format and is the owner's call.
 
 ## What XMind / MindMeister have, and where it lands
@@ -31,7 +31,7 @@ Status: slice 1 implemented (PR #8). Slice 2 (markers, level limit) implemented 
 
 ## Slice 1 details
 
-- Branch colours were removed after trying them (the owner, on judgment queue D-04: 「色が順不同になったり、それによって視認性が下がるぐらいなら 矢印に色をつけるというのをやめたいです」). No colouring rule without a stored colour fits: by position, an insert recolours every later topic; by creation rank, the colours do not follow the order on screen and a delete shifts them; by raw id, they repeat at random (4 topics: 72% chance two match). Storing one per node was the remaining option and was not taken. Lines, node borders and fold buttons are grey; the fold buttons use `--muted`, since `--line` is 1.7:1 on the page, too faint for a control.
+- Branch colours were removed after trying them (PR #11; the owner's words: 「うーん、色が順不同になったり、それによって視認性が下がるぐらいなら 矢印に色をつけるというのをやめたいです。」). No colouring rule without a stored colour fits: by position, an insert recolours every later topic; by creation rank, the colours do not follow the order on screen and a delete shifts them; by raw id, they repeat at random (4 topics: 72% chance two match). Storing one per node was the remaining option and was not taken. Lines, node borders and fold buttons are grey; the fold buttons use `--muted` (about 5.2:1 on a card), since `--line` is 1.6–1.9:1 against the page and card backgrounds, too faint for a control.
 - Provenance is a ✦ icon rather than a coloured border.
 - The root is a filled pill in the accent colour.
 - Icons are inline SVG paths in `web/icons.ts` (no icon package): link, task, note, AI, plus, minus, close, keyboard. AI is eda's own, keyboard is drawn after Lucide's, and the rest are Feather's; `web/ICONS-LICENSE` is Lucide's licence file, which holds both the ISC and the Feather MIT notice. A favicon is an inline SVG data URL.

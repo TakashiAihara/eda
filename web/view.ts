@@ -25,7 +25,6 @@ export function visibleSelection(top: Node, id: string, topShowsChildren = false
   return hidden === -1 || hidden === p.length - 1 ? id : p[hidden]!.id;
 }
 
-
 /**
  * The deepest level under `n` with something drawn on it: a child, or a suggestion waiting
  * under a node (`waiting`), to tell whether a level limit hides anything. `showChildren` is
