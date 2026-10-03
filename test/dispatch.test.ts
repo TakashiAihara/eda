@@ -516,8 +516,8 @@ test('the ceiling answers even when something outside the command\'s group holds
 test('a command that exits but leaves a child holding the pipes is answered with its exit code', async () => {
   tasks.set('t9', { id: 't9', number: 49, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
   writeFileSync(leftoverFile, '');
-  // bash, because dash sends SIGHUP to its background jobs on exit and there would be nothing left
-  // holding the pipes; this one does leave a `sleep 30` in the command's group.
+  // The `sleep 30` stays in the command's group holding the pipes after bash exits; the grace
+  // SIGTERM is what ends it.
   await withServer(config(['bash', '-c', `sleep 30 & echo $! > ${leftoverFile}; echo ok`]), 'K', async (call) => {
     await call('POST', `/api/nodes/n1/tasks`, { url: 'http://k/dashboard/workspace/W1/project/p1/task/t9' });
     // The ceiling is left at 300 s on purpose: what is being measured is that the answer
@@ -728,3 +728,19 @@ test('a task the person unlinks stops being polled and leaves the statuses', asy
   // Unlinked is eda's business: kaneo still has the task, and eda did not delete it.
   expect(tasks.has('t9')).toBe(true);
 });
+
+test('a group member that ignores SIGTERM is killed outright after the command exits', async () => {
+  tasks.set('t9', { id: 't9', number: 49, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
+  const pidFile = join(home, 'stubborn');
+  writeFileSync(pidFile, '');
+  // Only the grandchild ignores TERM; the command itself exits at once.
+  await withServer(config(['sh', '-c', `(trap "" TERM; sleep 30) & echo $! > ${pidFile}; echo ok`]), 'K', async (call) => {
+    await call('POST', `/api/nodes/n1/tasks`, { url: 'http://k/dashboard/workspace/W1/project/p1/task/t9' });
+    const { status } = await call('POST', '/api/nodes/n1/tasks/t9/dispatch', { repo: 'o/r' });
+    expect(status).toBe(200);
+    const stubborn = Number(readFileSync(pidFile, 'utf8'));
+    expect(stubborn).toBeGreaterThan(0);
+    await Bun.sleep(3_500);
+    expect(await alive(stubborn)).toBe(false);
+  });
+}, 20_000);
