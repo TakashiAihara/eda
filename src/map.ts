@@ -82,6 +82,11 @@ export type MapDoc = {
   /** The export before that one: finding it in map.md means a save was cut short, not an edit. */
   prevMdHash?: string;
   seq: number;
+  /**
+   * What the person last chose in the kaneo section, so the picker and the dispatch box open
+   * on the project and repo they used rather than empty. Not the tasks themselves: kaneo owns those.
+   */
+  dispatch?: { project?: string; repo?: string };
 };
 
 export class MapError extends Error {
@@ -131,10 +136,21 @@ export function find(root: Node, id: string): { node: Node; parent?: Node } | un
   return undefined;
 }
 
-function must(doc: MapDoc, id: string): { node: Node; parent?: Node } {
+/** The node, or a 404. The one place that message is written, so every route words it the same. */
+export function mustNode(doc: MapDoc, id: string): { node: Node; parent?: Node } {
   const hit = find(doc.root, id);
   if (!hit) throw new MapError(`no node ${id}`, 404);
   return hit;
+}
+
+/** The root down to `id`, both ends included; empty when `id` is not under `root`. */
+function pathOf(root: Node, id: string): Node[] {
+  if (root.id === id) return [root];
+  for (const c of root.children) {
+    const p = pathOf(c, id);
+    if (p.length) return [root, ...p];
+  }
+  return [];
 }
 
 function checkUrl(url: string): string {
@@ -151,7 +167,7 @@ function checkUrl(url: string): string {
 
 /** `index`: where among the siblings (Enter / Shift+Enter insert next to the selected one); the end when omitted. */
 export function addChild(doc: MapDoc, parentId: string, text: string, origin: Origin = { by: 'human' }, index?: number): Node {
-  const parent = must(doc, parentId).node;
+  const parent = mustNode(doc, parentId).node;
   const n = node(nextId(doc, 'n'), text, origin);
   if (index === undefined || index < 0 || index > parent.children.length) parent.children.push(n);
   else parent.children.splice(index, 0, n);
@@ -162,7 +178,7 @@ export function addChild(doc: MapDoc, parentId: string, text: string, origin: Or
 export type NodePatch = { text?: string; note?: string; collapsed?: boolean };
 
 export function editNode(doc: MapDoc, id: string, patch: NodePatch): Node {
-  const n = must(doc, id).node;
+  const n = mustNode(doc, id).node;
   if (patch.text !== undefined) {
     const text = oneLine(patch.text);
     // The current text is now the person's, whoever wrote the node or last changed it.
@@ -178,7 +194,7 @@ export function editNode(doc: MapDoc, id: string, patch: NodePatch): Node {
 }
 
 export function removeNode(doc: MapDoc, id: string): void {
-  const { parent } = must(doc, id);
+  const { parent } = mustNode(doc, id);
   if (!parent) throw new MapError('the root cannot be removed');
   parent.children = parent.children.filter((c) => c.id !== id);
   // A suggestion aimed at a node that is gone could never be adopted. The session that made
@@ -189,13 +205,13 @@ export function removeNode(doc: MapDoc, id: string): void {
 }
 
 export function addUrl(doc: MapDoc, id: string, url: string, origin: Origin = { by: 'human' }): void {
-  const n = must(doc, id).node;
+  const n = mustNode(doc, id).node;
   const u = checkUrl(url);
   if (!n.urls.some((x) => x.url === u)) n.urls.push({ url: u, origin });
 }
 
 export function removeUrl(doc: MapDoc, id: string, url: string): void {
-  const n = must(doc, id).node;
+  const n = mustNode(doc, id).node;
   let norm = url;
   try {
     norm = checkUrl(url);
@@ -206,13 +222,13 @@ export function removeUrl(doc: MapDoc, id: string, url: string): void {
 }
 
 export function addTask(doc: MapDoc, id: string, link: TaskLink): void {
-  const n = must(doc, id).node;
+  const n = mustNode(doc, id).node;
   if (!link.workspace || !link.project || !link.task) throw new MapError('workspace, project and task are required');
   if (!n.tasks.some((t) => t.task === link.task)) n.tasks.push(link);
 }
 
 export function removeTask(doc: MapDoc, id: string, task: string): void {
-  const n = must(doc, id).node;
+  const n = mustNode(doc, id).node;
   n.tasks = n.tasks.filter((t) => t.task !== task);
 }
 
@@ -221,7 +237,7 @@ export function removeTask(doc: MapDoc, id: string, task: string): void {
  * a toggle, so a repeated or doubled request lands on the same state, like the URL and task routes.
  */
 export function setMarker(doc: MapDoc, id: string, marker: string, on: boolean): Node {
-  const n = must(doc, id).node;
+  const n = mustNode(doc, id).node;
   if (!(MARKERS as readonly string[]).includes(marker)) throw new MapError(`unknown marker ${marker} (one of ${MARKERS.join(', ')})`);
   const m = marker as Marker;
   const kept = (n.markers ?? []).filter((x) => (on ? markerGroup(x) !== markerGroup(m) : x !== m));
@@ -240,6 +256,30 @@ export function parseKaneoUrl(url: string): TaskLink {
 
 export function kaneoTaskUrl(host: string, t: TaskLink): string {
   return `${host.replace(/\/$/, '')}/dashboard/workspace/${t.workspace}/project/${t.project}/task/${t.task}`;
+}
+
+/**
+ * The body of a task made from a node: what the session needs to work on it without the map
+ * in front of it — where the node sits, what is around it, and the way back to it.
+ *
+ * Pure like the rest of this file, so what a session would read is tested without a server.
+ */
+export function taskDescription(doc: MapDoc, id: string, dir: string): string {
+  const { node: n, parent } = mustNode(doc, id);
+  const section = (label: string, items: string[]): string[] => (items.length ? [`${label}:`, ...items.map((i) => `- ${i}`), ''] : []);
+  return [
+    // The path is the vertical context; the siblings and children the horizontal one.
+    pathOf(doc.root, id)
+      .map((x) => x.text)
+      .join(' > '),
+    '',
+    ...section('兄弟', (parent?.children ?? []).filter((c) => c.id !== id).map((c) => c.text)),
+    ...section('子', n.children.map((c) => c.text)),
+    ...(n.note ? ['ノート:', n.note, ''] : []),
+    ...section('URL', n.urls.map((u) => u.url)),
+    `マップ: ${dir}`,
+    `ノード: ${n.id}`,
+  ].join('\n');
 }
 
 // ---- what an AI does: suggest, nothing else -----------------------------
@@ -270,10 +310,10 @@ export function suggest(doc: MapDoc, input: AiInput, source: { by: 'ai'; session
   const at = new Date().toISOString();
   let s: Suggestion;
   if (input.kind === 'add') {
-    must(doc, input.parentId);
+    mustNode(doc, input.parentId);
     s = { id: nextId(doc, 's'), kind: 'add', parentId: input.parentId, text: oneLine(input.text), urls, reason, source, at };
   } else {
-    must(doc, input.nodeId);
+    mustNode(doc, input.nodeId);
     if (input.text === undefined && urls.length === 0) throw new MapError('an edit needs text or urls');
     s = {
       id: nextId(doc, 's'),
@@ -313,7 +353,7 @@ export function accept(doc: MapDoc, id: string, override?: { text?: string | nul
   if (override?.text === null && s.kind === 'add') throw new MapError('text is empty');
   const raw = override?.text === null ? undefined : (override?.text ?? s.text);
   const text = raw === undefined ? undefined : oneLine(raw);
-  const target = must(doc, s.kind === 'add' ? s.parentId : s.nodeId).node;
+  const target = mustNode(doc, s.kind === 'add' ? s.parentId : s.nodeId).node;
 
   takeSuggestion(doc, id);
   const origin: Origin = s.source.by === 'ai' ? s.source : { by: 'md-edit' };
@@ -354,7 +394,7 @@ export function reject(doc: MapDoc, id: string): void {
 
 export function say(doc: MapDoc, from: 'human' | 'ai', text: string, nodeId?: string, session?: string): Chat {
   if (text.trim() === '') throw new MapError('message is empty');
-  if (nodeId !== undefined) must(doc, nodeId);
+  if (nodeId !== undefined) mustNode(doc, nodeId);
   const c: Chat = {
     id: nextId(doc, 'c'),
     at: new Date().toISOString(),

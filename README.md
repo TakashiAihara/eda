@@ -32,6 +32,8 @@ claude --dangerously-load-development-channels server:eda
 
 Inside the session, say what you want to think about; the session runs `eda serve` and gives you the URL. A session started with `CLAUDE_CODE_SESSION_ID` is recorded in the map, and `claude --resume <id>` brings you back to it.
 
+In the node panel, 「タスクにする」 turns the node into a kaneo task and 「session に依頼」 hands a linked task to the configured command; kaneo's status comes back on the node's task tag.
+
 ## Keys (on the map, as in XMind)
 
 | Key | Action |
@@ -60,7 +62,8 @@ A map is a directory:
 
 ## Config
 
-- `~/.config/eda/config.json`: `{ "kaneo": { "host": "https://kaneo.example" } }` — enables task links. `EDA_KANEO_HOST` overrides.
+- `~/.config/eda/config.json`: `{ "kaneo": { "host": "https://kaneo.example", "workspace": "<workspace id>" }, "spawn": { "command": ["spawn-task", "{number}", "--project", "{project}", "--repo", "{repo}"] } }` — `host` enables task links (`EDA_KANEO_HOST` overrides it), `workspace` is where the project picker looks, and `spawn.command` is the argv 「session に依頼」 runs with `{number} {project} {repo} {workspace} {task}` filled in; no command, no button.
+- `KANEO_API_KEY`: the kaneo API key. Without it the create / dispatch / status features are off and the browser shows only the URL link.
 - `EDA_HOME` (default `~/.eda`): token and running-instance registry.
 
 ## Develop

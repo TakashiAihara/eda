@@ -15,6 +15,7 @@ import {
   removeNode,
   removeUrl,
   suggest,
+  taskDescription,
   toMarkdown,
   setMarker,
   toOutlineForAi,
@@ -164,6 +165,34 @@ test('kaneo task URLs are parsed into ids', () => {
   expect(parseKaneoUrl('https://k.example/dashboard/workspace/W/project/P/task/T?x=1')).toEqual({ workspace: 'W', project: 'P', task: 'T' });
   expect(() => parseKaneoUrl('https://k.example/')).toThrow(/kaneo/);
   expect(kaneoTaskUrl('https://k.example/', { workspace: 'W', project: 'P', task: 'T' })).toBe('https://k.example/dashboard/workspace/W/project/P/task/T');
+});
+
+test('a task description carries what a session needs without the map', () => {
+  const d = newMap('trip');
+  const hotel = addChild(d, 'n1', 'hotel');
+  const booking = addChild(d, hotel.id, 'book a room near the station');
+  addChild(d, hotel.id, 'compare prices');
+  addChild(d, booking.id, 'ryokan or hotel');
+  editNode(d, booking.id, { note: 'two nights' });
+  addUrl(d, booking.id, 'https://example.com/hotels');
+
+  const text = taskDescription(d, booking.id, '/maps/trip');
+  // The path is where it sits, the siblings and children what is around it, and the last two
+  // lines are how the session gets back to the node it came from.
+  expect(text.split('\n')[0]).toBe('trip > hotel > book a room near the station');
+  expect(text).toContain('- compare prices');
+  expect(text).toContain('- ryokan or hotel');
+  expect(text).toContain('two nights');
+  expect(text).toContain('https://example.com/hotels');
+  expect(text).toContain('/maps/trip');
+  expect(text).toContain(booking.id);
+  // The node is the path, not one of its own siblings.
+  expect(text).not.toContain('- book a room near the station');
+  // A node with nothing around it gets only the path and the way back: a section with
+  // nothing in it is left out rather than shown as an empty heading.
+  const solo = newMap('solo');
+  expect(taskDescription(solo, 'n1', '/maps/solo')).toBe('solo\n\nマップ: /maps/solo\nノード: n1');
+  expect(() => taskDescription(d, 'nope', '/maps/trip')).toThrow(/no node/);
 });
 
 test('a map directory can be claimed by one live process at a time', async () => {
