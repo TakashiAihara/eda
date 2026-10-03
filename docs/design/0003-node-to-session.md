@@ -60,8 +60,10 @@ sequenceDiagram
 
 - The server resolves the task number and the project from kaneo (the link's project is where the URL was pasted from, which is not always where the task ended up), fills `{number}`, `{project}`, `{repo}` (and `{workspace}`, `{task}`) into `spawn.command`, and runs it with `Bun.spawn` — an argv array, no shell.
 - Values are checked before they reach argv: number is an integer, ids match kaneo's id shape, repo matches `owner/name`.
+- The request asks for no idle timeout of its own: Bun closes a request idle for 10 s by default, and a dispatch is idle for as long as the command runs. The 300 s ceiling below is the only clock on it.
 - The command's exit code and the tail of each of its two streams come back to the browser, stderr under its own heading. `spawn-task` refuses a task already in progress, but only once it has written `in-progress`, which it does at the end of its run: two dispatches inside one run both pass that guard, so eda refuses a second dispatch of the same task (409) while one runs, as it does a second create for one node.
-- The command is killed after 300 s. `spawn-task` takes 40-80 s by design and eda knows nothing else about what `spawn.command` runs, so a hung one (a dead herdr socket, an `inf-run` waiting on a prompt) must not hold the request and the button forever; the browser is told it was cut short rather than shown a made-up exit code.
+- The command is killed after 300 s, and it is killed as a group: `spawn.command` is generic, and the grandchildren it leaves behind are part of the dispatch — they hold the pipes open and they are the kind of process that outlives the session it was started for. The group gets `SIGTERM`, then `SIGKILL` after 2 s if it is still there. A child that leaves the group (`setsid`) is out of reach, so the pipes are cut loose as well: nothing is waited on that eda cannot end.
+- A command that has already exited is answered on its own exit code, a second later at the most, rather than for as long as whatever it left behind holds the pipes open — and whatever that is, it goes with the group.
 - The command inherits `eda serve`'s environment, `CLAUDE_CODE_SESSION_ID` included. `spawn-task` records that as the 委譲元, so every task dispatched from the map is recorded as delegated by the session that started the map, and reports back to it — the map's session is the hub, and the person's click is not a separate session of its own.
 - `KANEO_API_KEY` therefore has to be in `eda serve`'s environment, not only in the session's: eda needs it to read the tasks, and the command needs what it needs from the same process. Start eda under `inf-run`, or export the key before starting it.
 
@@ -81,6 +83,7 @@ sequenceDiagram
 
 - The person's routes and the AI's share one token (issue #2). The new dispatch route widens what the AI could do from the shell: start a session, not only adopt a node. Closing #2 closes this too.
 - The status shown is up to 30 s old.
+- A `spawn.command` that backgrounds into a new session leaves a process eda cannot account for: it is not in the command's group, so it is neither killed at the ceiling nor on the way out. Only the command knows it exists.
 
 ## Not in this slice
 
