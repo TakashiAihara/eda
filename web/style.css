@@ -52,6 +52,7 @@ aside h2 { font-size: 13px; margin: 0 0 6px; color: var(--muted); }
 input, textarea, button { font: inherit; color: inherit; }
 input, textarea { width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
 textarea { min-height: 60px; resize: vertical; }
+select { max-width: 100%; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
 /* the browser default (#757575) is 3.3:1 on the dark card; --muted clears 4.5:1 in both themes */
 input::placeholder, textarea::placeholder { color: var(--muted); }
 button { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 2px 10px; cursor: pointer; }
@@ -83,6 +84,18 @@ a { color: var(--accent); word-break: break-all; }
 .node.sel { outline: 2.5px solid var(--fg); outline-offset: 2px; }
 .node .tag { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 1px; }
 .node .tag.ai { color: var(--ai); }
+/* kaneo's status, in both places a task tag appears: the node on the map and the panel's row.
+   `other` is a column eda has no colour for (kaneo allows custom ones): muted like unknown, but
+   labelled with kaneo's own word so it does not read as a task kaneo would not return. */
+.node .tag.to-do, aside .tag.to-do, .node .tag.unknown, aside .tag.unknown, .node .tag.other, aside .tag.other { color: var(--muted); }
+.node .tag.in-progress, aside .tag.in-progress { color: var(--doing); }
+/* review is neither doing nor done, and has to be told from both at a glance: --ai is the only
+   colour left with enough contrast on both the card and the panel */
+.node .tag.in-review, aside .tag.in-review { color: var(--ai); }
+.node .tag.done, aside .tag.done { color: var(--done); }
+/* The root keeps its own colour, after the status rules and not before them: it is filled with the
+   accent, where every status colour sits under 2:1 against it and the pill's own contrast does the
+   work. Its task tags are read in the panel, which does colour them. */
 .node.root .tag { color: inherit; }
 /* told apart by the dashed border and muted text; no opacity, which took the text under 3:1 */
 .node.ghost { border-style: dashed; border-color: var(--ghost); color: var(--muted); background: transparent; }
@@ -109,6 +122,12 @@ a { color: var(--accent); word-break: break-all; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
 .card.ghost { border-color: var(--ghost); }
+
+/* a linked task: its status, the dispatch box, and what the command printed */
+aside .task { border-left: 2px solid var(--line); padding-left: 8px; margin: 8px 0; }
+aside .task input.repo { flex: 1; min-width: 6em; }
+aside .task .ng { color: var(--danger); }
+aside .task pre.run { max-height: 8em; overflow: auto; margin: 4px 0 0; padding: 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
 .msgs { max-height: 40vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .msg { padding: 6px 8px; border-radius: 6px; background: var(--card); border: 1px solid var(--line); white-space: pre-wrap; }
 .msg.ai { border-color: var(--ai); }

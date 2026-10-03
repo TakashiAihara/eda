@@ -1,9 +1,10 @@
-import { find, kaneoTaskUrl, MARKERS, type MapDoc, type Marker, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
+import { find, kaneoTaskUrl, MARKERS, type MapDoc, type Marker, type Node, type Origin, type Outline, type Suggestion, type TaskLink } from '../src/map.ts';
 import { icon } from './icons.ts';
 import { combo, show } from './keys.ts';
 import { clampZoom, deepest, pathTo, visibleSelection } from './view.ts';
 
-type State = { rev: number; dir: string; doc: MapDoc; kaneoHost: string | null };
+type TaskStatus = { status: string; number?: number; title?: string };
+type State = { rev: number; dir: string; doc: MapDoc; kaneo: { host: string | null; createTask: boolean; status: boolean; dispatch: boolean }; taskStatus: Record<string, TaskStatus> };
 
 // The token arrives in the URL fragment once and is kept, so a reload or a bookmark works.
 const fromHash = new URLSearchParams(location.hash.slice(1)).get('t');
@@ -89,6 +90,25 @@ const onEnter = (fn: (v: string, key: string | undefined) => void) => (e: Event)
 
 const originLabel = (o: Origin): string =>
   o.by === 'human' ? '人が追加' : o.by === 'md-edit' ? 'map.md の編集を採用' : `AI の提案を採用${o.model ? ` (${o.model})` : ''}`;
+
+/**
+ * Kaneo's own status values, as the person reads them. Ordered by how much they change the
+ * map: a node's task tag shows the first of these any of its tasks is in, so a finished task
+ * reads at a glance. A status eda has no colour for (a project with columns of its own) is
+ * shown as kaneo spells it, as `other` — a real answer, not the unknown of a task kaneo will
+ * not return.
+ */
+const STATUS_LABEL: Record<string, string> = { 'to-do': '未着手', 'in-progress': '進行中', 'in-review': 'レビュー中', done: '完了', unknown: '不明' };
+const STATUS_ORDER = ['done', 'in-review', 'in-progress', 'to-do', 'other', 'unknown'] as const;
+type StatusClass = (typeof STATUS_ORDER)[number];
+const KNOWN: readonly string[] = ['to-do', 'in-progress', 'in-review', 'done'];
+/** The colour class: the status itself for the four kaneo creates, `other` for a column of a project's own, unknown for no answer. */
+const statusOf = (status: string | undefined): StatusClass => {
+  if (status === undefined || status === '' || status === 'unknown') return 'unknown';
+  return KNOWN.includes(status) ? (status as StatusClass) : 'other';
+};
+/** What the person reads: eda's Japanese for a status it knows, kaneo's own word for the rest. */
+const statusLabel = (status: string | undefined): string => STATUS_LABEL[status ?? ''] ?? status ?? '不明';
 
 const markerLabel: Record<Marker, string> = {
   'priority-1': '優先度 1',
@@ -202,8 +222,22 @@ function renderMap(s: State): void {
         ),
       );
 
-  const tag = (name: 'link' | 'task' | 'note', count: number, label: string) =>
-    count ? h('span', { class: 'tag', title: label, role: 'img', 'aria-label': label }, icon(name), count > 1 ? String(count) : '') : null;
+  const tag = (name: 'link' | 'task' | 'note', count: number, label: string, cls = '') =>
+    count ? h('span', { class: `tag ${cls}`.trim(), title: label, role: 'img', 'aria-label': label }, icon(name), count > 1 ? String(count) : '') : null;
+
+  /** The node's tasks as the one status the tag carries, so a finished task reads without opening the node. */
+  const taskTag = (n: Node): HTMLElement | null => {
+    if (!n.tasks.length) return null;
+    // With status off there is nothing to colour or to say: an uncoloured count, rather than a
+    // task marked unknown because kaneo was never asked.
+    if (!s.kaneo.status) return tag('task', n.tasks.length, `kaneo タスク ${n.tasks.length} 件`);
+    // Labelled with kaneo's own words, coloured by the class: a column eda has no colour for
+    // still says what it is.
+    const labels = n.tasks.map((t) => statusLabel(s.taskStatus[t.task]?.status));
+    const classes = n.tasks.map((t) => statusOf(s.taskStatus[t.task]?.status));
+    const status = STATUS_ORDER.find((x) => classes.includes(x))!;
+    return tag('task', n.tasks.length, `kaneo タスク ${n.tasks.length} 件: ${labels.join(' / ')}`, status);
+  };
 
   const item = (n: Node, depth = 0): HTMLElement => {
     // At the level limit. A collapsed node there keeps its own fold button: showing every level
@@ -221,7 +255,7 @@ function renderMap(s: State): void {
             n.origin.by === 'ai' ? h('span', { class: 'tag ai', role: 'img', 'aria-label': 'AI の提案から採用' }, icon('ai')) : null,
             h('span', { class: 'text' }, n.text),
             tag('link', n.urls.length, `URL ${n.urls.length} 件`),
-            tag('task', n.tasks.length, `kaneo タスク ${n.tasks.length} 件`),
+            taskTag(n),
             tag('note', n.note ? 1 : 0, 'ノートあり'),
           );
     const li = h('li', {}, box);
@@ -257,6 +291,128 @@ function renderMap(s: State): void {
   );
 }
 
+/**
+ * The projects of the configured workspace. Asked once per open; a failure keeps its own state,
+ * so the row can say why it is empty and offer another try rather than sitting there dead.
+ */
+let projects: { id: string; name: string }[] | undefined;
+let projectsFailed = false;
+let projectsLoading = false;
+
+async function loadProjects(): Promise<void> {
+  projectsLoading = true;
+  try {
+    projects = (await api('GET', '/api/kaneo/projects', undefined, true)) as { id: string; name: string }[];
+    projectsFailed = false;
+  } catch {
+    // Not cached as an empty list: that reads as "kaneo has no projects", leaves the button dead
+    // until a reload, and hides a project created since the first ask.
+    projects = undefined;
+    projectsFailed = true;
+  } finally {
+    projectsLoading = false;
+  }
+  // The picker was drawn empty a moment ago; filled in place, respecting focus as any redraw does.
+  if (state) render(state, false);
+}
+
+/** The project picker and 「タスクにする」, with the project last used already chosen. */
+function makeTaskRow(s: State, n: Node): HTMLElement {
+  if (projectsFailed) {
+    return h('div', { class: 'row' },
+      h('span', { class: 'small' }, 'プロジェクトを取得できませんでした'),
+      h('button', { click: () => void loadProjects() }, '再取得'),
+    );
+  }
+  // The pick is a draft, not the map's: on a map that has never made a task there is nothing
+  // saved to preselect, and the redraw every 1.5 s would take the choice away between two clicks.
+  const draftKey = `${n.id}:project`;
+  const wanted = drafts.get(draftKey) ?? s.doc.dispatch?.project;
+  const chosen = projects?.some((p) => p.id === wanted) ? wanted : undefined;
+  // The create button needs a project the person can see: without the placeholder the select
+  // would fall back to the first one kaneo lists, and the task would land there unseen.
+  const none = projects === undefined && projectsLoading ? 'プロジェクトを読み込み中…' : 'プロジェクトを選ぶ';
+  const picker = h('select', { 'aria-label': 'プロジェクト', 'data-draft': draftKey, ...(projects?.length ? {} : { disabled: '' }) },
+    ...(chosen !== undefined ? [] : [h('option', { disabled: '', selected: '' }, none)]),
+    ...(projects ?? []).map((p) => {
+      const o = h('option', { value: p.id }, p.name) as HTMLOptionElement;
+      o.selected = p.id === chosen;
+      return o;
+    }),
+  ) as HTMLSelectElement;
+  const make = h('button', { click: () => act('POST', `/api/nodes/${n.id}/kaneo-task`, { project: picker.value }, [draftKey, picker.value]) }, 'タスクにする') as HTMLButtonElement;
+  // Picked but not saved yet: the button is what the pick is for, so it wakes up on the change.
+  picker.addEventListener('change', () => (make.disabled = picker.value === ''));
+  make.disabled = projects === undefined || projects.length === 0 || chosen === undefined;
+  if (projects === undefined && !projectsLoading) void loadProjects();
+  return h('div', { class: 'row' }, picker, make);
+}
+
+/** What the last command printed, kept like the drafts: the 1.5 s redraw must not take it away. */
+const runs = new Map<string, { code: number | null; output: string }>();
+/** The dispatches out right now. The server refuses a second one, so the button stops offering it. */
+const dispatching = new Set<string>();
+
+/**
+ * The command's exit code is the answer, not a refusal: a non-zero one comes back with the
+ * output to read, so the body is read whatever the status was. `null` is the ceiling cutting it
+ * short, which is a refusal to have finished, not a failure of the command.
+ */
+async function requestSession(n: Node, t: TaskLink, repo: HTMLInputElement, button: HTMLButtonElement): Promise<void> {
+  const key = `${n.id}:${t.task}`;
+  dispatching.add(key);
+  button.disabled = true;
+  button.textContent = '実行中…';
+  try {
+    const res = await fetch(`/api/nodes/${n.id}/tasks/${encodeURIComponent(t.task)}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ repo: repo.value }),
+    });
+    const json = (await res.json()) as { code?: number | null; output?: string; timedOut?: boolean; error?: string };
+    if (json.timedOut) runs.set(key, { code: null, output: json.output ?? '' });
+    else if (typeof json.code !== 'number') alert(json.error ?? res.statusText);
+    else runs.set(key, { code: json.code, output: json.output ?? '' });
+  } catch (err) {
+    alert(`session を起動できませんでした (${err instanceof Error ? err.message : err})`);
+  } finally {
+    dispatching.delete(key);
+    button.disabled = false;
+    button.textContent = 'session に依頼';
+  }
+  // Redrawn on every ending, not only the ones that ran: a refusal leaves the row showing
+  // 「実行中…」 otherwise, and it is the only thing that draws the button back.
+  await refresh(true);
+}
+
+/** 「session に依頼」, or 「実行中…」 while one is out: a second click would only be refused. */
+function dispatchButton(n: Node, t: TaskLink, repo: HTMLInputElement): HTMLButtonElement {
+  const busy = dispatching.has(`${n.id}:${t.task}`);
+  const button = h('button', {}, busy ? '実行中…' : 'session に依頼') as HTMLButtonElement;
+  button.disabled = busy;
+  button.addEventListener('click', () => void requestSession(n, t, repo, button));
+  return button;
+}
+
+/** One linked task: what kaneo says about it, and (when a command is configured) a session for it. */
+function taskRow(s: State, n: Node, t: TaskLink): HTMLElement {
+  const number = s.taskStatus[t.task]?.number;
+  const run = runs.get(`${n.id}:${t.task}`);
+  const draftKey = `${n.id}:${t.task}:repo`;
+  const repo = h('input', { class: 'repo', placeholder: 'owner/repo', value: s.doc.dispatch?.repo ?? '', 'data-draft': draftKey }) as HTMLInputElement;
+  return h('div', { class: 'task' },
+    h('div', { class: 'row' },
+      // The title kaneo returned when there is one: ids say nothing about which task it is.
+      h('a', { href: kaneoTaskUrl(s.kaneo.host!, t), target: '_blank', rel: 'noopener' }, s.taskStatus[t.task]?.title ?? `${t.project} / ${t.task}`),
+      // No status to show when nothing is reading it: 不明 would say kaneo is silent, not eda.
+      ...(s.kaneo.status ? [h('span', { class: `tag ${statusOf(s.taskStatus[t.task]?.status)}`, title: 'kaneo のステータス' }, `${number === undefined ? '' : `#${number} `}${statusLabel(s.taskStatus[t.task]?.status)}`)] : []),
+      h('button', { 'aria-label': `タスク ${t.task} のリンクを外す`, click: () => act('DELETE', `/api/nodes/${n.id}/tasks`, { task: t.task }) }, '✕'),
+    ),
+    ...(s.kaneo.dispatch ? [h('div', { class: 'row' }, repo, dispatchButton(n, t, repo))] : []),
+    ...(run ? [h('div', { class: `small${run.code === 0 ? '' : ' ng'}` }, run.code === null ? '時間制限で打ち切りました' : `終了コード ${run.code}`), h('pre', { class: 'run' }, run.output)] : []),
+  );
+}
+
 function renderNode(s: State): void {
   const hit = find(s.doc.root, selected);
   if (!hit) {
@@ -280,15 +436,13 @@ function renderNode(s: State): void {
         h('button', { 'aria-label': `URL ${u.url} を外す`, click: () => act('DELETE', `${base}/urls`, { url: u.url }) }, '✕')),
     ),
     h('input', { placeholder: 'URL を添付 (Enter)', 'data-draft': `${n.id}:url`, keydown: onEnter((v, k) => act('POST', `${base}/urls`, { url: v }, [k, v])) }),
-    ...(s.kaneoHost === null
+    ...(s.kaneo.host === null
       ? []
       : [
           h('h2', {}, 'kaneo タスク'),
-          ...n.tasks.map((t) =>
-            h('div', { class: 'row' }, h('a', { href: kaneoTaskUrl(s.kaneoHost!, t), target: '_blank', rel: 'noopener' }, `${t.project} / ${t.task}`),
-              h('button', { 'aria-label': `タスク ${t.task} のリンクを外す`, click: () => act('DELETE', `${base}/tasks`, { task: t.task }) }, '✕')),
-          ),
+          ...n.tasks.map((t) => taskRow(s, n, t)),
           h('input', { placeholder: 'kaneo のタスク URL を貼ってリンク (Enter)', 'data-draft': `${n.id}:task`, keydown: onEnter((v, k) => act('POST', `${base}/tasks`, { url: v }, [k, v])) }),
+          ...(s.kaneo.createTask ? [makeTaskRow(s, n)] : []),
         ]),
     // A pointer route to F6, which on a Mac needs Fn and some browsers keep for themselves.
     ...(n.children.length && n.id !== drilled ? [h('div', { class: 'row' }, h('button', { click: () => drill(n.id) }, 'このノードに絞って表示 (F6)'))] : []),
