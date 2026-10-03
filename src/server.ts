@@ -250,6 +250,8 @@ export function startServer(opts: ServeOptions) {
   /** Creates and dispatches out right now, so a doubled click cannot make a second of either. */
   const creating = new Set<string>();
   const dispatching = new Set<string>();
+  /** Groups of commands still running, so a stop does not leave them without their ceiling. */
+  const running = new Set<number>();
 
   /**
    * ponytail: the ceiling on one dispatch, not a prediction about one. spawn-task takes 40-80 s
@@ -447,6 +449,7 @@ export function startServer(opts: ServeOptions) {
             // `detached` puts the command in a group of its own, so what it leaves behind can be
             // signalled with it — at the ceiling, and when it exits holding the pipes open.
             const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe', detached: true });
+            running.add(proc.pid);
             const readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
             let timedOut = false;
             const cutPipes = (): void => {
@@ -484,11 +487,12 @@ export function startServer(opts: ServeOptions) {
               return c;
             });
             const [out, err] = await tails;
+            running.delete(proc.pid);
             clearTimeout(ceiling);
             if (grace !== undefined) clearTimeout(grace);
-            // Nothing left to signal once the command is gone: a late SIGKILL would be aimed at a
-            // group id the kernel is free to hand to something else.
-            if (hard !== undefined) clearTimeout(hard);
+            // `hard` is left to fire: the leader being gone says nothing about the rest of its group
+            // (a member that ignores SIGTERM is still there), and Linux does not reuse a pid while a
+            // live process has it as its pgid, so the SIGKILL cannot land on a stranger's group.
             // The tail is what the person reads: enough to see why it failed, not the whole scrollback.
             const output = `${out}${err ? `\n--- stderr ---\n${err}` : ''}`;
             // The repo is remembered only once there is a command behind it.
@@ -553,6 +557,8 @@ export function startServer(opts: ServeOptions) {
    */
   const stop = (): void => {
     if (poll !== undefined) clearInterval(poll);
+    // The timers that would have ended these die with the server.
+    for (const pid of running) killGroup(pid, 'SIGKILL');
     server.stop(true);
   };
   return { server, doc, stop };
