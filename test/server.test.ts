@@ -12,8 +12,8 @@ const { Client, describe: describeChat, runTool, undelivered } = await import('.
 const { loadMap, token } = await import('../src/store.ts');
 
 const dir = mkdtempSync(join(tmpdir(), 'eda-map-'));
-const { server } = startServer({ dir, host: '127.0.0.1', port: 0, title: 'trip', session: 'S1', cwd: '/w' });
-afterAll(() => server.stop(true));
+const { server, stop } = startServer({ dir, host: '127.0.0.1', port: 0, title: 'trip', session: 'S1', cwd: '/w' });
+afterAll(() => stop());
 
 const base = `http://127.0.0.1:${server.port}`;
 const person = async (method: string, path: string, body?: unknown) => {
@@ -173,7 +173,7 @@ test('a directory with only a map.md keeps it: its lines come back as candidates
       ['add', 'two', undefined],
     ]);
   } finally {
-    s2.server.stop(true);
+    s2.stop();
   }
 });
 
@@ -204,7 +204,7 @@ test('a map.md edit saved while a request body is still arriving is read as an a
     expect(doc.root.children.map((c) => c.text)).toEqual(['browser child']);
     expect(doc.suggestions.map((s) => [s.kind, s.text])).toEqual([['add', 'editor child']]);
   } finally {
-    s3.server.stop(true);
+    s3.stop();
   }
 });
 

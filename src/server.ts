@@ -181,16 +181,25 @@ export function startServer(opts: ServeOptions) {
   const sameStatus = (a: TaskStatus | undefined, b: TaskStatus): boolean => a?.status === b.status && a?.number === b.number && a?.title === b.title;
 
   /**
-   * Read every linked task. A change bumps rev, and the browser's own 1.5 s poll redraws:
-   * that poll is the whole channel out, and this is the only thing that uses it.
+   * Every task linked on the map, walked now rather than remembered: a task linked while a pass
+   * was out on the network would otherwise be pruned at the end of that pass as if unlinked.
    */
-  const refreshTasks = async (): Promise<void> => {
+  const linkedIds = (): Set<string> => {
     const ids = new Set<string>();
     const walk = (n: Node): void => {
       for (const t of n.tasks) ids.add(t.task);
       for (const c of n.children) walk(c);
     };
     walk(doc.root);
+    return ids;
+  };
+
+  /**
+   * Read every linked task. A change bumps rev, and the browser's own 1.5 s poll redraws:
+   * that poll is the whole channel out, and this is the only thing that uses it.
+   */
+  const refreshTasks = async (): Promise<void> => {
+    const ids = linkedIds();
     let changed = false;
     for (const id of ids) {
       const r = await kaneoApi('GET', `/task/${encodeURIComponent(id)}`);
@@ -201,14 +210,17 @@ export function startServer(opts: ServeOptions) {
     }
     // A task the person unlinked stops being polled; a task kaneo cannot return is never
     // unlinked for them, it only reads unknown until kaneo has it again.
+    const still = linkedIds();
     for (const id of Object.keys(taskStatus)) {
-      if (ids.has(id)) continue;
+      if (still.has(id)) continue;
       delete taskStatus[id];
       changed = true;
     }
     if (changed) rev += 1;
   };
 
+  /** Out of startServer, so a stop can clear it: an interval this process made is a reason to stay up. */
+  let poll: ReturnType<typeof setInterval> | undefined;
   if (kaneo.status) {
     // A tick while the previous pass is still out is dropped: kaneo can spend its whole 10 s
     // timeout on one task, so passes would overlap, and the older one would write a stale status
@@ -226,7 +238,7 @@ export function startServer(opts: ServeOptions) {
     // Right after start, so the first state the browser draws already carries the statuses.
     void refreshOnce().catch(() => {});
     // unref'd: the poll is the server's business, not a reason for the process to stay up.
-    const poll = setInterval(() => void refreshOnce().catch(() => {}), opts.kaneoPollMs ?? 30_000);
+    poll = setInterval(() => void refreshOnce().catch(() => {}), opts.kaneoPollMs ?? 30_000);
     (poll as { unref?: () => void }).unref?.();
   }
 
@@ -246,11 +258,17 @@ export function startServer(opts: ServeOptions) {
    * hold the request and the button forever. Raise it if a real command ever needs longer.
    */
   const SPAWN_CEILING_MS = 300_000;
+  /** What a group that will not go quietly gets before it is killed outright. */
+  const SPAWN_KILL_GRACE_MS = 2_000;
+  /** What the pipes get after the command itself is gone, for a grandchild still holding them. */
+  const PIPE_GRACE_MS = 1_000;
   /** How much of each stream is kept: enough to see why it failed, not the whole scrollback. */
   const TAIL_CHARS = 4000;
 
-  /** The last `TAIL_CHARS` of one pipe, read as they arrive rather than collected in memory first. */
-  /** `readers`: the dispatch's own, so its ceiling cuts loose only its pipes, not another dispatch's. */
+  /**
+   * The last `TAIL_CHARS` of one pipe, read as they arrive rather than collected in memory first.
+   * `readers`: the dispatch's own, so its ceiling cuts loose only its pipes, not another dispatch's.
+   */
   const tail = async (stream: ReadableStream<Uint8Array>, readers: Set<ReadableStreamDefaultReader<Uint8Array>>): Promise<string> => {
     const reader = stream.getReader();
     const decode = new TextDecoder();
@@ -259,11 +277,24 @@ export function startServer(opts: ServeOptions) {
     try {
       for (let part = await reader.read(); !part.done; part = await reader.read()) kept = (kept + decode.decode(part.value, { stream: true })).slice(-TAIL_CHARS);
     } catch {
-      /* cut by the ceiling: what arrived is what there is */
+      /* cut: what arrived is what there is */
     } finally {
       readers.delete(reader);
     }
     return kept + decode.decode();
+  };
+
+  /**
+   * Signal the command's whole group rather than the process eda started: `spawn.command` is
+   * generic, and a grandchild it leaves behind belongs to the dispatch — it holds the pipes open,
+   * and it is the kind of process that outlives the session it was started for.
+   */
+  const killGroup = (pid: number, signal: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      /* already gone, or never a group of its own */
+    }
   };
 
   /**
@@ -355,11 +386,16 @@ export function startServer(opts: ServeOptions) {
             const description = taskDescription(d, node, opts.dir);
             const task = rec(await kaneoOr('POST', `/task/${encodeURIComponent(project)}`, { title, description, priority: 'medium', status: 'to-do' }));
             const id = str(task['id']);
-            if (id === undefined) throw new MapError('kaneo returned no id for the new task', 502);
+            // kaneo made a task and would not name it: nothing on the map can point at it, so the
+            // only place left to say is where it was created.
+            if (id === undefined) throw new MapError(`kaneo returned no id for the task it created in project ${project}; a task may be waiting there`, 502);
             // Deleting a node is a write of its own and runs while this one is out on the network.
             // A task nothing links to is an orphan the person has no way back to, so it goes back.
             if (find(d.root, node) === undefined) {
-              await kaneoApi('DELETE', `/task/${encodeURIComponent(id)}`);
+              const deleted = await kaneoApi('DELETE', `/task/${encodeURIComponent(id)}`);
+              // And if that did not work either, the orphan is here to stay: say so, and say which
+              // one, rather than leaving a 409 that reads like the map is clean.
+              if (!deleted.ok) throw new MapError(`the node was removed while the task was being created and the task could not be deleted: ${id} (${deleted.message})`, 502);
               throw new MapError('the node was removed while the task was being created; the task was deleted', 409);
             }
             addTask(d, node, { workspace: kaneoWorkspace, project, task: id });
@@ -377,6 +413,9 @@ export function startServer(opts: ServeOptions) {
       },
       '/api/nodes/:id/tasks/:task/dispatch': {
         POST: api(true, async (req, d, p) => {
+          // Bun closes a request idle for 10 s, and a dispatch is idle for as long as the command
+          // runs: spawn-task takes 40-80 s by design. The ceiling below is eda's own.
+          server.timeout(req, 0);
           const link = mustNode(d, p['id']!).node.tasks.find((t) => t.task === p['task']);
           if (!link) throw new MapError(`task ${p['task']} is not linked to this node`, 404);
           const repo = str((await body(req))['repo']) ?? '';
@@ -405,23 +444,51 @@ export function startServer(opts: ServeOptions) {
             const argv = spawnCommand.map((part) => part.replace(/\{(number|project|repo|workspace|task)\}/g, (_, k: string) => values[k] ?? ''));
             // An argv array, no shell, and this process's environment: spawn-task needs the kaneo
             // key and herdr, which are the ones the session that started this map runs with.
-            const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe' });
+            // `detached` puts the command in a group of its own, so what it leaves behind can be
+            // signalled with it — at the ceiling, and when it exits holding the pipes open.
+            const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe', detached: true });
             const readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
             let timedOut = false;
+            const cutPipes = (): void => {
+              for (const r of readers) void r.cancel().catch(() => {});
+            };
+            /** A group that will not go quietly gets the grace, and then nothing more is asked of it. */
+            let hard: ReturnType<typeof setTimeout> | undefined;
+            const killHard = (): void => {
+              hard = setTimeout(() => killGroup(proc.pid, 'SIGKILL'), SPAWN_KILL_GRACE_MS);
+              (hard as { unref?: () => void }).unref?.();
+            };
             // Armed before reading: a pipe only ends when the command does, so waiting on it first
             // would be waiting for the very thing the ceiling exists to cut short.
-            const timer = setTimeout(() => {
+            const ceiling = setTimeout(() => {
               timedOut = true;
-              proc.kill('SIGKILL');
-              // The readers too, or a grandchild that inherited a pipe would keep them open after
-              // the command itself is gone.
-              for (const r of readers) void r.cancel().catch(() => {});
+              killGroup(proc.pid, 'SIGTERM');
+              killHard();
+              cutPipes();
             }, SPAWN_CEILING_MS);
             // Both pipes drained together: a command that fills one while we read the other
             // would wait for a reader that never comes.
-            const [out, err] = await Promise.all([tail(proc.stdout as ReadableStream<Uint8Array>, readers), tail(proc.stderr as ReadableStream<Uint8Array>, readers)]);
-            const code = await proc.exited;
-            clearTimeout(timer);
+            const tails = Promise.all([tail(proc.stdout as ReadableStream<Uint8Array>, readers), tail(proc.stderr as ReadableStream<Uint8Array>, readers)]) as Promise<[string, string]>;
+            // The command is gone but a grandchild still holds a pipe: the exit code is the real
+            // one, and whatever is holding the pipe goes with it rather than holding the request.
+            let grace: ReturnType<typeof setTimeout> | undefined;
+            const code = await proc.exited.then((c) => {
+              if (!timedOut) {
+                grace = setTimeout(() => {
+                  killGroup(proc.pid, 'SIGTERM');
+                  killHard();
+                  cutPipes();
+                }, PIPE_GRACE_MS);
+                (grace as { unref?: () => void }).unref?.();
+              }
+              return c;
+            });
+            const [out, err] = await tails;
+            clearTimeout(ceiling);
+            if (grace !== undefined) clearTimeout(grace);
+            // Nothing left to signal once the command is gone: a late SIGKILL would be aimed at a
+            // group id the kernel is free to hand to something else.
+            if (hard !== undefined) clearTimeout(hard);
             // The tail is what the person reads: enough to see why it failed, not the whole scrollback.
             const output = `${out}${err ? `\n--- stderr ---\n${err}` : ''}`;
             // The repo is remembered only once there is a command behind it.
@@ -480,5 +547,13 @@ export function startServer(opts: ServeOptions) {
     },
     fetch: () => new Response('not found', { status: 404 }),
   });
-  return { server, doc };
+  /**
+   * Stop serving and stop asking kaneo. The poll has to be cleared here rather than left to the
+   * process: `eda serve` outlives nothing, but a test (and anything embedding eda) does.
+   */
+  const stop = (): void => {
+    if (poll !== undefined) clearInterval(poll);
+    server.stop(true);
+  };
+  return { server, doc, stop };
 }

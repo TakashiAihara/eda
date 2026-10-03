@@ -324,13 +324,15 @@ function makeTaskRow(s: State, n: Node): HTMLElement {
       h('button', { click: () => void loadProjects() }, '再取得'),
     );
   }
-  const wanted = s.doc.dispatch?.project;
+  // The pick is a draft, not the map's: on a map that has never made a task there is nothing
+  // saved to preselect, and the redraw every 1.5 s would take the choice away between two clicks.
+  const draftKey = `${n.id}:project`;
+  const wanted = drafts.get(draftKey) ?? s.doc.dispatch?.project;
   const chosen = projects?.some((p) => p.id === wanted) ? wanted : undefined;
   // The create button needs a project the person can see: without the placeholder the select
   // would fall back to the first one kaneo lists, and the task would land there unseen.
-  const ready = projects !== undefined && projects.length > 0 && chosen !== undefined;
   const none = projects === undefined && projectsLoading ? 'プロジェクトを読み込み中…' : 'プロジェクトを選ぶ';
-  const picker = h('select', { 'aria-label': 'プロジェクト', ...(projects?.length ? {} : { disabled: '' }) },
+  const picker = h('select', { 'aria-label': 'プロジェクト', 'data-draft': draftKey, ...(projects?.length ? {} : { disabled: '' }) },
     ...(chosen !== undefined ? [] : [h('option', { disabled: '', selected: '' }, none)]),
     ...(projects ?? []).map((p) => {
       const o = h('option', { value: p.id }, p.name) as HTMLOptionElement;
@@ -338,9 +340,12 @@ function makeTaskRow(s: State, n: Node): HTMLElement {
       return o;
     }),
   ) as HTMLSelectElement;
+  const make = h('button', { click: () => act('POST', `/api/nodes/${n.id}/kaneo-task`, { project: picker.value }, [draftKey, picker.value]) }, 'タスクにする') as HTMLButtonElement;
+  // Picked but not saved yet: the button is what the pick is for, so it wakes up on the change.
+  picker.addEventListener('change', () => (make.disabled = picker.value === ''));
+  make.disabled = projects === undefined || projects.length === 0 || chosen === undefined;
   if (projects === undefined && !projectsLoading) void loadProjects();
-  return h('div', { class: 'row' }, picker,
-    h('button', { ...(ready ? {} : { disabled: '' }), click: () => act('POST', `/api/nodes/${n.id}/kaneo-task`, { project: picker.value }) }, 'タスクにする'));
+  return h('div', { class: 'row' }, picker, make);
 }
 
 /** What the last command printed, kept like the drafts: the 1.5 s redraw must not take it away. */
@@ -366,18 +371,17 @@ async function requestSession(n: Node, t: TaskLink, repo: HTMLInputElement, butt
     });
     const json = (await res.json()) as { code?: number | null; output?: string; timedOut?: boolean; error?: string };
     if (json.timedOut) runs.set(key, { code: null, output: json.output ?? '' });
-    else if (typeof json.code !== 'number') {
-      alert(json.error ?? res.statusText);
-      return;
-    } else runs.set(key, { code: json.code, output: json.output ?? '' });
+    else if (typeof json.code !== 'number') alert(json.error ?? res.statusText);
+    else runs.set(key, { code: json.code, output: json.output ?? '' });
   } catch (err) {
     alert(`session を起動できませんでした (${err instanceof Error ? err.message : err})`);
-    return;
   } finally {
     dispatching.delete(key);
     button.disabled = false;
     button.textContent = 'session に依頼';
   }
+  // Redrawn on every ending, not only the ones that ran: a refusal leaves the row showing
+  // 「実行中…」 otherwise, and it is the only thing that draws the button back.
   await refresh(true);
 }
 
