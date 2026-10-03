@@ -177,21 +177,44 @@ test('a task description carries what a session needs without the map', () => {
   addUrl(d, booking.id, 'https://example.com/hotels');
 
   const text = taskDescription(d, booking.id, '/maps/trip');
-  // The path is where it sits, the siblings and children what is around it, and the last two
-  // lines are how the session gets back to the node it came from.
+  // The path is where it sits, the siblings and children what is around it, and the last
+  // section is how the session gets back to the node it came from.
   expect(text.split('\n')[0]).toBe('trip > hotel > book a room near the station');
   expect(text).toContain('- compare prices');
   expect(text).toContain('- ryokan or hotel');
   expect(text).toContain('two nights');
-  expect(text).toContain('https://example.com/hotels');
-  expect(text).toContain('/maps/trip');
-  expect(text).toContain(booking.id);
+  expect(text).toContain('- https://example.com/hotels');
+  expect(text).toContain('- マップ: /maps/trip');
+  expect(text).toContain(`- ノード: ${booking.id}`);
   // The node is the path, not one of its own siblings.
   expect(text).not.toContain('- book a room near the station');
+  // Markdown kaneo renders: a section is a blank line away from the one before it, and its
+  // items are list items. Single newlines would merge the sections into one paragraph.
+  expect(text).toBe(
+    [
+      'trip > hotel > book a room near the station',
+      '',
+      '兄弟:',
+      '- compare prices',
+      '',
+      '子:',
+      '- ryokan or hotel',
+      '',
+      'ノート:',
+      'two nights',
+      '',
+      'URL:',
+      '- https://example.com/hotels',
+      '',
+      '元のノード:',
+      '- マップ: /maps/trip',
+      `- ノード: ${booking.id}`,
+    ].join('\n'),
+  );
   // A node with nothing around it gets only the path and the way back: a section with
   // nothing in it is left out rather than shown as an empty heading.
   const solo = newMap('solo');
-  expect(taskDescription(solo, 'n1', '/maps/solo')).toBe('solo\n\nマップ: /maps/solo\nノード: n1');
+  expect(taskDescription(solo, 'n1', '/maps/solo')).toBe('solo\n\n元のノード:\n- マップ: /maps/solo\n- ノード: n1');
   expect(() => taskDescription(d, 'nope', '/maps/trip')).toThrow(/no node/);
 });
 

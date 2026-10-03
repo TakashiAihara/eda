@@ -12,6 +12,7 @@ import {
   addTask,
   addUrl,
   editNode,
+  find,
   MapError,
   type MapDoc,
   type Node,
@@ -44,10 +45,17 @@ export function startServer(opts: ServeOptions) {
   // Read once, at start: a key that appeared later would switch the buttons on under a browser
   // that had drawn them away, and one that goes must not be used half-way through the map's life.
   const kaneoKey = process.env['KANEO_API_KEY'] ?? '';
-  const spawnCommand = cfg.spawn?.command ?? [];
-  const kaneoOn = kaneoHost !== null && kaneoWorkspace !== '' && kaneoKey !== '';
+  // A string where an argv belongs is a config mistake: taken as one it would hand the whole
+  // command line to spawn as a single argument. Dispatch is off instead, and says so here —
+  // at start, where the person can still see it, rather than as a 500 at the click.
+  const spawnRaw: unknown = cfg.spawn?.command;
+  const spawnCommand = Array.isArray(spawnRaw) && spawnRaw.every((x) => typeof x === 'string') ? (spawnRaw as string[]) : [];
+  if (cfg.spawn !== undefined && spawnCommand.length === 0) console.error('eda: spawn.command must be a non-empty array of strings; 「session に依頼」 is off');
+  // Reading a task is a GET on the task itself, which needs nowhere to put it: no workspace. A map
+  // that only links tasks by URL would otherwise never see a status at all.
+  const statusOn = kaneoHost !== null && kaneoKey !== '';
   /** What the browser may offer: each feature needs its own piece configured, so they switch separately. */
-  const kaneo = { host: kaneoHost, createTask: kaneoOn, dispatch: kaneoOn && spawnCommand.length > 0 };
+  const kaneo = { host: kaneoHost, status: statusOn, createTask: statusOn && kaneoWorkspace !== '', dispatch: statusOn && spawnCommand.length > 0 };
 
   /**
    * Record a Claude Code session on the map. Only on start and on an explicit attach:
@@ -117,8 +125,9 @@ export function startServer(opts: ServeOptions) {
    * Not thrown: a task kaneo cannot return is a status the poll writes down (unknown), not a
    * failure for the person to sit through. The routes that await an answer use `kaneoOr`.
    */
-  const kaneoApi = async (method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ ok: true; json: unknown } | { ok: false; message: string }> => {
+  const kaneoApi = async (method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<{ ok: true; json: unknown } | { ok: false; message: string }> => {
     let res: Response;
+    let text: string;
     try {
       res = await fetch(kaneoBase + path, {
         method,
@@ -127,10 +136,12 @@ export function startServer(opts: ServeOptions) {
         // kaneo is another machine: a request that hangs there must not hold a person's click open.
         signal: AbortSignal.timeout(10_000),
       });
+      // In the try with the fetch: the body is part of the answer, and a connection that dies
+      // between the headers and the last byte is a failure to report, not a thrown error.
+      text = await res.text();
     } catch (err) {
       return { ok: false, message: `kaneo ${path}: ${err instanceof Error ? err.message : String(err)}` };
     }
-    const text = await res.text();
     let json: unknown;
     try {
       json = JSON.parse(text);
@@ -198,18 +209,62 @@ export function startServer(opts: ServeOptions) {
     if (changed) rev += 1;
   };
 
-  if (kaneo.createTask) {
+  if (kaneo.status) {
+    // A tick while the previous pass is still out is dropped: kaneo can spend its whole 10 s
+    // timeout on one task, so passes would overlap, and the older one would write a stale status
+    // over the newer one.
+    let refreshing = false;
+    const refreshOnce = async (): Promise<void> => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        await refreshTasks();
+      } finally {
+        refreshing = false;
+      }
+    };
     // Right after start, so the first state the browser draws already carries the statuses.
-    void refreshTasks().catch(() => {});
+    void refreshOnce().catch(() => {});
     // unref'd: the poll is the server's business, not a reason for the process to stay up.
-    const poll = setInterval(() => void refreshTasks().catch(() => {}), opts.kaneoPollMs ?? 30_000);
+    const poll = setInterval(() => void refreshOnce().catch(() => {}), opts.kaneoPollMs ?? 30_000);
     (poll as { unref?: () => void }).unref?.();
   }
 
   /** owner/name, the shape a git remote takes. Checked here rather than by the command, which has none. */
-  const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
-  /** Kaneo's own ids. Whitespace or a slash in one would only come from a link typed by hand. */
-  const KANEO_ID = /^[^\s/]+$/;
+  const REPO = /^(?!\.+$)[A-Za-z0-9_.][A-Za-z0-9_.-]*\/(?!\.+$)[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
+  /** Kaneo's own ids. Narrow, so a value that reaches argv can never read as an option. */
+  const KANEO_ID = /^[A-Za-z0-9_]+$/;
+
+  /** Creates and dispatches out right now, so a doubled click cannot make a second of either. */
+  const creating = new Set<string>();
+  const dispatching = new Set<string>();
+
+  /**
+   * ponytail: the ceiling on one dispatch, not a prediction about one. spawn-task takes 40-80 s
+   * by design and eda knows nothing else about what spawn.command runs, so the only thing eda can
+   * promise is that a hung command (a dead herdr socket, an inf-run waiting on a prompt) cannot
+   * hold the request and the button forever. Raise it if a real command ever needs longer.
+   */
+  const SPAWN_CEILING_MS = 300_000;
+  /** How much of each stream is kept: enough to see why it failed, not the whole scrollback. */
+  const TAIL_CHARS = 4000;
+
+  /** The last `TAIL_CHARS` of one pipe, read as they arrive rather than collected in memory first. */
+  /** `readers`: the dispatch's own, so its ceiling cuts loose only its pipes, not another dispatch's. */
+  const tail = async (stream: ReadableStream<Uint8Array>, readers: Set<ReadableStreamDefaultReader<Uint8Array>>): Promise<string> => {
+    const reader = stream.getReader();
+    const decode = new TextDecoder();
+    readers.add(reader);
+    let kept = '';
+    try {
+      for (let part = await reader.read(); !part.done; part = await reader.read()) kept = (kept + decode.decode(part.value, { stream: true })).slice(-TAIL_CHARS);
+    } catch {
+      /* cut by the ceiling: what arrived is what there is */
+    } finally {
+      readers.delete(reader);
+    }
+    return kept + decode.decode();
+  };
 
   /**
    * Who is suggesting. The session is required: it is the key of the one pending slot,
@@ -230,7 +285,7 @@ export function startServer(opts: ServeOptions) {
     routes: {
       '/': index,
       '/api/state': {
-        GET: api(false, () => ({ rev, dir: opts.dir, doc, kaneoHost, kaneo, taskStatus })),
+        GET: api(false, () => ({ rev, dir: opts.dir, doc, kaneo, taskStatus })),
       },
       '/api/rev': { GET: api(false, () => ({ rev, sessions: doc.sessions.map((s) => s.id) })) },
       '/api/nodes': {
@@ -285,19 +340,39 @@ export function startServer(opts: ServeOptions) {
       '/api/nodes/:id/kaneo-task': {
         POST: api(true, async (req, d, p) => {
           needKaneo();
+          const node = p['id']!;
           const project = str((await body(req))['project']) ?? '';
           if (!KANEO_ID.test(project)) throw new MapError('project is required');
-          const title = mustNode(d, p['id']!).node.text;
-          // The description is built before the task is created: a node that is gone must not
-          // leave an orphan in kaneo that nobody can see from the map.
-          const description = taskDescription(d, p['id']!, opts.dir);
-          const task = rec(await kaneoOr('POST', `/task/${encodeURIComponent(project)}`, { title, description, priority: 'medium', status: 'to-do' }));
-          const id = str(task['id']);
-          if (id === undefined) throw new MapError('kaneo returned no id for the new task', 502);
-          addTask(d, p['id']!, { workspace: kaneoWorkspace, project, task: id });
-          d.dispatch = { ...d.dispatch, project };
-          await refreshTasks();
-          return { task };
+          const title = mustNode(d, node).node.text;
+          // One create per node at a time. The click waits on kaneo, so a second one (a doubled
+          // click, a retry) would leave two tasks and two links for one idea.
+          if (creating.has(node)) throw new MapError(`a task for node ${node} is already being created`, 409);
+          creating.add(node);
+          try {
+            // The description is built before the task is created: a node that is already gone must
+            // not leave an orphan in kaneo that nobody can see from the map. One that goes while
+            // kaneo is answering is caught below, which building it early cannot do.
+            const description = taskDescription(d, node, opts.dir);
+            const task = rec(await kaneoOr('POST', `/task/${encodeURIComponent(project)}`, { title, description, priority: 'medium', status: 'to-do' }));
+            const id = str(task['id']);
+            if (id === undefined) throw new MapError('kaneo returned no id for the new task', 502);
+            // Deleting a node is a write of its own and runs while this one is out on the network.
+            // A task nothing links to is an orphan the person has no way back to, so it goes back.
+            if (find(d.root, node) === undefined) {
+              await kaneoApi('DELETE', `/task/${encodeURIComponent(id)}`);
+              throw new MapError('the node was removed while the task was being created; the task was deleted', 409);
+            }
+            addTask(d, node, { workspace: kaneoWorkspace, project, task: id });
+            d.dispatch = { ...d.dispatch, project };
+            // Kaneo's own answer carries the status, number and title of the new task: reading
+            // every linked task again would hold the click for as many requests as the map has
+            // links, and the status it already had in hand is the same one.
+            taskStatus[id] = readStatus(task);
+            rev += 1;
+            return { task };
+          } finally {
+            creating.delete(node);
+          }
         }),
       },
       '/api/nodes/:id/tasks/:task/dispatch': {
@@ -309,26 +384,52 @@ export function startServer(opts: ServeOptions) {
           if (!kaneo.dispatch) throw new MapError('dispatch is not configured (spawn.command in the config)');
           // Everything that reaches argv is checked first: an argv element is only as safe as
           // its loosest value, and the ids came from a link someone may have typed by hand.
-          for (const [what, id] of [['workspace', link.workspace], ['project', link.project], ['task', link.task]] as const) {
+          for (const [what, id] of [['workspace', link.workspace], ['task', link.task]] as const) {
             if (!KANEO_ID.test(id)) throw new MapError(`${what} is not a kaneo id: ${id}`);
           }
-          // The number is kaneo's own (kaneo the URL carries an id, not an issue number), and
-          // it is the one value the command cannot do without.
-          const number = rec(await kaneoOr('GET', `/task/${encodeURIComponent(link.task)}`))['number'];
-          if (typeof number !== 'number' || !Number.isInteger(number)) throw new MapError(`kaneo has no number for task ${link.task}`, 502);
-          const values: Record<string, string> = { number: String(number), project: link.project, repo, workspace: link.workspace, task: link.task };
-          const argv = spawnCommand.map((part) => part.replace(/\{(number|project|repo|workspace|task)\}/g, (_, k: string) => values[k] ?? ''));
-          d.dispatch = { ...d.dispatch, repo };
-          // An argv array, no shell, and this process's environment: spawn-task needs the kaneo
-          // key and herdr, which are the ones the session that started this map runs with.
-          const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe' });
-          // Both pipes drained together: a command that fills one while we read the other
-          // would wait for a reader that never comes.
-          const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-          const code = await proc.exited;
-          // The tail is what the person reads: enough to see why it failed, not the whole scrollback.
-          const output = `${out}${err}`.slice(-4000);
-          return Response.json({ code, output }, { status: code === 0 ? 200 : 502 });
+          // spawn-task writes in-progress at the end of its run, so its own guard lets a second
+          // click inside the first run through; here the task id is what is held.
+          if (dispatching.has(link.task)) throw new MapError(`already dispatching task ${link.task}`, 409);
+          dispatching.add(link.task);
+          try {
+            // The number and the project are kaneo's own: a link names the project it was pasted
+            // from, which is not necessarily the one the task ended up in. The number is the one
+            // value the command cannot do without.
+            const task = rec(await kaneoOr('GET', `/task/${encodeURIComponent(link.task)}`));
+            const number = task['number'];
+            if (typeof number !== 'number' || !Number.isInteger(number)) throw new MapError(`kaneo has no number for task ${link.task}`, 502);
+            const project = str(task['projectId']);
+            if (project === undefined) throw new MapError(`kaneo has no project for task ${link.task}`, 502);
+            if (!KANEO_ID.test(project)) throw new MapError(`project is not a kaneo id: ${project}`);
+            const values: Record<string, string> = { number: String(number), project, repo, workspace: link.workspace, task: link.task };
+            const argv = spawnCommand.map((part) => part.replace(/\{(number|project|repo|workspace|task)\}/g, (_, k: string) => values[k] ?? ''));
+            // An argv array, no shell, and this process's environment: spawn-task needs the kaneo
+            // key and herdr, which are the ones the session that started this map runs with.
+            const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe' });
+            const readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
+            let timedOut = false;
+            // Armed before reading: a pipe only ends when the command does, so waiting on it first
+            // would be waiting for the very thing the ceiling exists to cut short.
+            const timer = setTimeout(() => {
+              timedOut = true;
+              proc.kill('SIGKILL');
+              // The readers too, or a grandchild that inherited a pipe would keep them open after
+              // the command itself is gone.
+              for (const r of readers) void r.cancel().catch(() => {});
+            }, SPAWN_CEILING_MS);
+            // Both pipes drained together: a command that fills one while we read the other
+            // would wait for a reader that never comes.
+            const [out, err] = await Promise.all([tail(proc.stdout as ReadableStream<Uint8Array>, readers), tail(proc.stderr as ReadableStream<Uint8Array>, readers)]);
+            const code = await proc.exited;
+            clearTimeout(timer);
+            // The tail is what the person reads: enough to see why it failed, not the whole scrollback.
+            const output = `${out}${err ? `\n--- stderr ---\n${err}` : ''}`;
+            // The repo is remembered only once there is a command behind it.
+            d.dispatch = { ...d.dispatch, repo };
+            return Response.json({ code: timedOut ? null : code, output, ...(timedOut ? { timedOut: true } : {}) }, { status: timedOut ? 504 : code === 0 ? 200 : 502 });
+          } finally {
+            dispatching.delete(link.task);
+          }
         }),
       },
       '/api/suggestions/:id/accept': {

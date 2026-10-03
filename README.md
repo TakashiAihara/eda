@@ -62,8 +62,8 @@ A map is a directory:
 
 ## Config
 
-- `~/.config/eda/config.json`: `{ "kaneo": { "host": "https://kaneo.example", "workspace": "<workspace id>" }, "spawn": { "command": ["spawn-task", "{number}", "--project", "{project}", "--repo", "{repo}"] } }` — `host` enables task links (`EDA_KANEO_HOST` overrides it), `workspace` is where the project picker looks, and `spawn.command` is the argv 「session に依頼」 runs with `{number} {project} {repo} {workspace} {task}` filled in; no command, no button.
-- `KANEO_API_KEY`: the kaneo API key. Without it the create / dispatch / status features are off and the browser shows only the URL link.
+- `~/.config/eda/config.json`: `{ "kaneo": { "host": "https://kaneo.example", "workspace": "<workspace id>" }, "spawn": { "command": ["spawn-task", "{number}", "--project", "{project}", "--repo", "{repo}"] } }` — `host` enables task links (`EDA_KANEO_HOST` overrides it), `workspace` is where the project picker looks, and `spawn.command` is the argv 「session に依頼」 runs with `{number} {project} {repo} {workspace} {task}` filled in; no command, no button. Reading a task's status is a `GET` on the task, so the status on the node needs the host and the key only; 「タスクにする」 and the project picker also need `workspace`.
+- `KANEO_API_KEY`: the kaneo API key. Without it the create / dispatch / status features are off and the browser shows only the URL link. It has to be in `eda serve`'s own environment (start eda under `inf-run`, or export the key first): the dispatched command inherits that environment.
 - `EDA_HOME` (default `~/.eda`): token and running-instance registry.
 
 ## Develop

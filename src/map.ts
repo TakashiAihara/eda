@@ -262,6 +262,9 @@ export function kaneoTaskUrl(host: string, t: TaskLink): string {
  * The body of a task made from a node: what the session needs to work on it without the map
  * in front of it — where the node sits, what is around it, and the way back to it.
  *
+ * Markdown kaneo's editor renders: a blank line between sections and `- ` items, so a note that
+ * runs to several lines and a list of siblings stay what they look like.
+ *
  * Pure like the rest of this file, so what a session would read is tested without a server.
  */
 export function taskDescription(doc: MapDoc, id: string, dir: string): string {
@@ -277,8 +280,9 @@ export function taskDescription(doc: MapDoc, id: string, dir: string): string {
     ...section('子', n.children.map((c) => c.text)),
     ...(n.note ? ['ノート:', n.note, ''] : []),
     ...section('URL', n.urls.map((u) => u.url)),
-    `マップ: ${dir}`,
-    `ノード: ${n.id}`,
+    '元のノード:',
+    `- マップ: ${dir}`,
+    `- ノード: ${n.id}`,
   ].join('\n');
 }
 
