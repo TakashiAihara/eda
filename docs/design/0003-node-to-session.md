@@ -1,6 +1,6 @@
 # From a node to a task to a Claude Code session
 
-Status: planned (kaneo eda#45). Folds in kaneo eda#15 (create a kaneo task from a node).
+Status: implemented (PR #12). Folds in kaneo eda#15 (create a kaneo task from a node).
 
 ## Background
 
@@ -27,11 +27,11 @@ sequenceDiagram
   P->>B: "make a task" on a node (project picked)
   B->>S: POST /api/nodes/:id/kaneo-task {project}
   S->>K: POST /api/task/{project} {title, description}
-  K-->>S: task {id, number}
+  K-->>S: task {id, number, status, projectId}
   S->>S: link the task to the node (existing tasks[])
   P->>B: "dispatch" on a linked task (repo entered)
   B->>S: POST /api/nodes/:id/tasks/:task/dispatch {repo}
-  S->>K: GET /api/task/{id} (number, status)
+  S->>K: GET /api/task/{id} (number, projectId)
   S->>X: argv with {number} {project} {repo}
   X-->>S: exit code, output
   loop every 30 s
@@ -48,7 +48,7 @@ sequenceDiagram
   - the node's siblings and children (the horizontal context)
   - the node's note and URLs
   - where it came from: the map directory and node id
-- Priority and status are kaneo's defaults (`medium`, `to-do`).
+- Priority and status are the defaults kaneo-cli sends (`medium`, `to-do`), not kaneo's own: kaneo would leave the priority at `no-priority`, and a task made from a map is meant to be worked on.
 
 ## Status on the node
 
@@ -58,10 +58,12 @@ sequenceDiagram
 
 ## Dispatch
 
-- The server resolves the task number from kaneo, fills `{number}`, `{project}`, `{repo}` (and `{workspace}`, `{task}`) into `spawn.command`, and runs it with `Bun.spawn` — an argv array, no shell.
+- The server resolves the task number and the project from kaneo (the link's project is where the URL was pasted from, which is not always where the task ended up), fills `{number}`, `{project}`, `{repo}` (and `{workspace}`, `{task}`) into `spawn.command`, and runs it with `Bun.spawn` — an argv array, no shell.
 - Values are checked before they reach argv: number is an integer, ids match kaneo's id shape, repo matches `owner/name`.
-- The command's exit code and the tail of its output come back to the browser. `spawn-task` itself refuses a task already in progress, so eda adds no duplicate guard of its own.
-- The command inherits `eda serve`'s environment. `spawn-task` needs the kaneo key and herdr, which is the case when the session that started the map runs inside herdr with the key.
+- The command's exit code and the tail of each of its two streams come back to the browser, stderr under its own heading. `spawn-task` refuses a task already in progress, but only once it has written `in-progress`, which it does at the end of its run: two dispatches inside one run both pass that guard, so eda refuses a second dispatch of the same task (409) while one runs, as it does a second create for one node.
+- The command is killed after 300 s. `spawn-task` takes 40-80 s by design and eda knows nothing else about what `spawn.command` runs, so a hung one (a dead herdr socket, an `inf-run` waiting on a prompt) must not hold the request and the button forever; the browser is told it was cut short rather than shown a made-up exit code.
+- The command inherits `eda serve`'s environment, `CLAUDE_CODE_SESSION_ID` included. `spawn-task` records that as the 委譲元, so every task dispatched from the map is recorded as delegated by the session that started the map, and reports back to it — the map's session is the hub, and the person's click is not a separate session of its own.
+- `KANEO_API_KEY` therefore has to be in `eda serve`'s environment, not only in the session's: eda needs it to read the tasks, and the command needs what it needs from the same process. Start eda under `inf-run`, or export the key before starting it.
 
 ## Configuration
 
@@ -73,7 +75,7 @@ sequenceDiagram
 ```
 
 - `KANEO_API_KEY` in the environment. Without it the create / dispatch / status features are hidden; the URL link stays.
-- `kaneo.workspace` is where the project picker lists projects from.
+- `kaneo.workspace` is where the project picker lists projects from. Reading a task's status is a `GET` on the task, so status needs the host and the key only; creating a task and listing projects need a workspace as well.
 
 ## Known limits
 

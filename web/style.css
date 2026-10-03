@@ -84,12 +84,19 @@ a { color: var(--accent); word-break: break-all; }
 .node.sel { outline: 2.5px solid var(--fg); outline-offset: 2px; }
 .node .tag { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 1px; }
 .node .tag.ai { color: var(--ai); }
-.node.root .tag { color: inherit; }
 /* kaneo's status, in both places a task tag appears: the node on the map and the panel's row.
-   Later than the rules above, so a root's tags take the status colour rather than its own. */
-.node .tag.to-do, aside .tag.to-do, .node .tag.unknown, aside .tag.unknown { color: var(--muted); }
+   `other` is a column eda has no colour for (kaneo allows custom ones): muted like unknown, but
+   labelled with kaneo's own word so it does not read as a task kaneo would not return. */
+.node .tag.to-do, aside .tag.to-do, .node .tag.unknown, aside .tag.unknown, .node .tag.other, aside .tag.other { color: var(--muted); }
 .node .tag.in-progress, aside .tag.in-progress { color: var(--doing); }
+/* review is neither doing nor done, and has to be told from both at a glance: --ai is the only
+   colour left with enough contrast on both the card and the panel */
+.node .tag.in-review, aside .tag.in-review { color: var(--ai); }
 .node .tag.done, aside .tag.done { color: var(--done); }
+/* The root keeps its own colour, after the status rules and not before them: it is filled with the
+   accent, where every status colour sits under 2:1 against it and the pill's own contrast does the
+   work. Its task tags are read in the panel, which does colour them. */
+.node.root .tag { color: inherit; }
 /* told apart by the dashed border and muted text; no opacity, which took the text under 3:1 */
 .node.ghost { border-style: dashed; border-color: var(--ghost); color: var(--muted); background: transparent; }
 .node.ghost:hover { color: var(--fg); background: var(--card); }
