@@ -136,6 +136,18 @@ test('a line deleted from between its siblings leaves nothing to offer', () => {
   const d = newMap('p');
   for (const t of ['a', 'b', 'c', 'd']) addChild(d, 'n1', t);
   expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- c\n- d\n'))).toEqual([]);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- c\n- D\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n5', text: 'D', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('the last of the siblings goes the same way as one in the middle', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- b\n'))).toEqual([]);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- b\n- C\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n4', text: 'C', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
 });
 
 test('a line inserted between its siblings is one addition and no edits', () => {
@@ -172,6 +184,69 @@ test('a deleted line before a branch does not move the lines under the branch af
   expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - a1\n- c\n  - c2\n'))).toEqual([
     { kind: 'edit', nodeId: 'n6', text: 'c2', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
   ]);
+});
+
+test('two siblings with one text are told apart by what is under them', () => {
+  const d = newMap('p');
+  const one = addChild(d, 'n1', 'a');
+  addChild(d, one.id, 'A');
+  const two = addChild(d, 'n1', 'a');
+  addChild(d, two.id, 'B');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - B\n'))).toEqual([]);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - B\n- z\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'z', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a leaf renamed to a line that holds its old text below is still a rename', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- x\n  - a\n- b\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n2', text: 'x', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n2', text: 'a', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a deletion before a matched branch does not shift the lines compared after it', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'x');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, 'A');
+  const c = addChild(d, 'n1', 'c');
+  const under = addChild(d, c.id, 'C');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - A\n- c\n  - D\n'))).toEqual([
+    { kind: 'edit', nodeId: under.id, text: 'D', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line renamed to its sibling text is a rename, not a second copy', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n- b\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n2', text: 'b', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('on a tie the edited line is passed over first', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b']) addChild(d, 'n1', t);
+  // The tie has two answers of the same length; this pins which one, so the backtrack is not free to flip.
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n- a\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'b', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('one edit near either end of a long list of siblings is one candidate', () => {
+  const d = newMap('p');
+  for (let i = 0; i < 6000; i++) addChild(d, 'n1', `l${i}`);
+  const md = (at: number) => parseMarkdown(`# p\n\n${Array.from({ length: 6000 }, (_, i) => (i === at ? `- L${i}` : `- l${i}`)).join('\n')}\n`);
+  // The cost of peeling off the shared ends is not pinned here: measured by hand at about 100 ms
+  // with it and 1.3 s / 355 MB without, and a time limit in a test run did not tell the two apart.
+  for (const [line, id] of [[1000, 'n1002'], [5000, 'n5002']] as const) {
+    expect(diffOutline(d, md(line))).toEqual([
+      { kind: 'edit', nodeId: id, text: `L${line}`, urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    ]);
+  }
 });
 
 test('two identical new sibling lines are two candidates, and seeing the edit again adds none', () => {

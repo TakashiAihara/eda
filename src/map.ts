@@ -406,36 +406,70 @@ export function parseMarkdown(md: string): Outline {
   return root;
 }
 
-/** The (existing, edited) index pairs of the longest common subsequence of two lists, compared on one key. */
-function lcsPairs<T>(a: readonly T[], b: readonly T[], key: (x: T) => string): [number, number][] {
-  const ka = a.map(key);
-  const kb = b.map(key);
-  const len: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      len[i]![j] = ka[i] === kb[j] ? len[i + 1]![j + 1]! + 1 : Math.max(len[i + 1]![j]!, len[i]![j + 1]!);
+/** The (existing, edited) index pairs of the longest common subsequence of two lists of keys. */
+function lcsPairs(a: readonly string[], b: readonly string[]): [number, number][] {
+  // The ends both lists share are decided already; peeling them off keeps the table down to
+  // the stretch that changed, which is what keeps a long sibling list cheap.
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const ma = a.slice(head, a.length - tail);
+  const mb = b.slice(head, b.length - tail);
+  const len: number[][] = Array.from({ length: ma.length + 1 }, () => new Array<number>(mb.length + 1).fill(0));
+  for (let i = ma.length - 1; i >= 0; i--) {
+    for (let j = mb.length - 1; j >= 0; j--) {
+      len[i]![j] = ma[i] === mb[j] ? len[i + 1]![j + 1]! + 1 : Math.max(len[i + 1]![j]!, len[i]![j + 1]!);
     }
   }
   const pairs: [number, number][] = [];
-  for (let i = 0, j = 0; i < a.length && j < b.length; ) {
-    if (ka[i] === kb[j]) {
-      pairs.push([i, j]);
+  for (let i = 0; i < head; i++) pairs.push([i, i]);
+  for (let i = 0, j = 0; i < ma.length && j < mb.length; ) {
+    if (ma[i] === mb[j]) {
+      pairs.push([i + head, j + head]);
       i++;
       j++;
-    } else if (len[i + 1]![j]! >= len[i]![j + 1]!) i++;
-    else j++;
+    // On a tie the edited line is passed over first, so it is left in the gap next to the
+    // existing one and the two read as a rewrite: [a, b] edited to [b, b] renames a rather
+    // than adding a second b.
+    } else if (len[i]![j + 1]! >= len[i + 1]![j]!) j++;
+    else i++;
   }
+  for (let i = 0; i < tail; i++) pairs.push([a.length - tail + i, b.length - tail + i]);
   return pairs;
+}
+
+type Tree = { text: string; children: readonly Tree[] };
+const shape = (t: Tree): unknown => [t.text, t.children.map(shape)];
+
+/**
+ * The map's siblings against the edited lines: whole subtrees first, so two siblings with one
+ * text are told apart by what is under them; then the text alone inside each gap that left.
+ */
+function siblingMatches(kids: readonly Tree[], lines: readonly Tree[]): [number, number][] {
+  const out: [number, number][] = [];
+  const sub = (x: Tree): string => JSON.stringify(shape(x));
+  let fromKid = 0;
+  let fromLine = 0;
+  for (const [ci, ej] of [...lcsPairs(kids.map(sub), lines.map(sub)), [kids.length, lines.length] as [number, number]]) {
+    const inGap = lcsPairs(kids.slice(fromKid, ci).map((k) => k.text), lines.slice(fromLine, ej).map((l) => l.text));
+    for (const [i, j] of inGap) out.push([i + fromKid, j + fromLine]);
+    if (ci < kids.length) out.push([ci, ej]);
+    fromKid = ci + 1;
+    fromLine = ej + 1;
+  }
+  return out;
 }
 
 /**
  * Turn an edit made to map.md behind eda's back into candidates.
  *
- * Siblings are matched by their text, so one line added or removed in the middle does not
- * read as a rewrite of every line after it. What is left between two matched lines is the
- * one rewritten stretch, paired up by position.
+ * Siblings are matched by their subtree and then by their text, so one line added or removed
+ * in the middle does not read as a rewrite of every line after it. What is left between two
+ * matched lines is the one rewritten stretch, paired up by position.
  * A new line keeps the lines written under it, so adopting it brings them along.
- * Deletions are not offered: removing is a person's click in the UI, not a candidate.
+ * Deletions are not offered: removing is a person's click in the UI, not a candidate, so a
+ * line a person moved shows up twice: as an addition, and still where it was.
  */
 export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
   const out: NewSuggestion[] = [];
@@ -449,9 +483,10 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
     let afterNode = 0;
     let afterLine = 0;
     // Each match ends one gap and starts the next; the gap is walked in the edited order.
-    for (const [ci, ej] of [...lcsPairs(n.children, e.children, (c) => c.text), end]) {
+    for (const [ci, ej] of [...siblingMatches(n.children, e.children), end]) {
       for (let k = 0; k < ej - afterLine; k++) {
         const ec = e.children[afterLine + k]!;
+        // No gap holds two lines with one text: a match took them, so anything left really changed.
         const c = afterNode + k < ci ? n.children[afterNode + k] : undefined;
         if (!c) {
           out.push({
