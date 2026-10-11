@@ -47,7 +47,8 @@ Status: slice 1 implemented (PR #8); its branch colours removed again (PR #11). 
 - Markers are a fixed set, `priority-1..3`, `doing`, `done`, `flag`, `star`, `question`, stored as `Node.markers` (absent when empty, in that fixed order). Free labels were not taken: they would grow into a second task tracker next to the kaneo links.
 - One priority and one progress state at a time: setting one replaces the other of its group, as in XMind. Flag, star and question are independent.
 - Only a person sets markers (`POST /api/nodes/:id/markers`). The AI reads them in `read_map`; no MCP tool sets them, and an AI edit that carries a `markers` field is not read. The route shares the one token with the AI side, like adoption does (the known limit in 0001, issue #2). The AI does not suggest markers either (D-01).
-- The route takes `{ marker, on }` rather than toggling, so a doubled key press or a retried request lands on the same state, like the URL and task routes.
+- The route takes `{ marker, on }` rather than toggling, so a retried request lands on the same state, like the URL and task routes.
+- A key moves as many steps as it is pressed, also before the page redraws: the page applies each press to its own copy at once and reads the next press from there, so `d d` goes doing → done and `f f` sets and clears the flag (decided 2026-10-11, #14; to be revisited if it gets in the way in use).
 - Keys: 1 / 2 / 3 toggle a priority, `d` cycles doing → done → none, `f` toggles the flag. Star and question are buttons in the node panel, which has a toggle for every marker.
 - `map.md` does not carry markers: it stays a plain outline that Markmap and Obsidian open.
 - The level limit (Alt+1..9, Alt+0 for all) hides what is below that level under the drawn root without touching `collapsed`, so it is not saved and a reload shows every level.

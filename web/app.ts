@@ -108,9 +108,9 @@ function markerMark(m: Marker): HTMLElement {
 }
 
 /**
- * `on` from the state drawn now; sent explicitly, so a doubled key press sets the same thing twice.
- * Queued one after another: two presses in flight could otherwise land in the other order
- * (priority 1 then 2, saved as 1).
+ * `on` from the page's copy, which already holds the presses not yet saved; sent explicitly, so
+ * a retried request lands on the same state. Queued one after another: two presses in flight
+ * could otherwise land in the other order (priority 1 then 2, saved as 1).
  */
 let markerQueue: Promise<unknown> = Promise.resolve();
 /**
