@@ -66,6 +66,7 @@ A map is a directory:
 ## Develop
 
 ```bash
+bunx playwright install --only-shell chromium   # once: test/ui.test.ts drives the map in headless Chromium
 bun test
 bun run typecheck
 ```
