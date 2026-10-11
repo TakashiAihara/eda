@@ -11,7 +11,7 @@ const wasHome = process.env['EDA_HOME'];
 const wasConfig = process.env['XDG_CONFIG_HOME'];
 process.env['EDA_HOME'] = home;
 process.env['XDG_CONFIG_HOME'] = home;
-// Imported after the home is set: the store reads it as it is when a map opens.
+// Imported after the home is set, so nothing the import does on its own can see the real one.
 const { startServer } = await import('../src/server.ts');
 const { token } = await import('../src/store.ts');
 
@@ -46,11 +46,16 @@ const ui = async (): Promise<{
       headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+    // A failed setup call stops here with its reason, not later as a node that is not there.
+    if (!r.ok) throw new Error(`${method} ${path}: ${r.status} ${await r.text()}`);
     return await r.json();
   };
   const context = await browser.newContext();
   contexts.push(context);
   const page = await context.newPage();
+  // Under the test's own limit: a wait that runs out fails this test, instead of bun killing the
+  // browser every later test shares.
+  page.setDefaultTimeout(5_000);
 
   return {
     page,
@@ -97,27 +102,27 @@ const drawnMarks = (page: Page): Promise<string[]> =>
   );
 
 /** Polling the server, rather than sleeping: the save and the redraw land in their own time. */
-const until = async (read: () => boolean | Promise<boolean>): Promise<void> => {
-  for (let i = 0; i < 200; i++) {
+const until = async (what: string, read: () => boolean | Promise<boolean>): Promise<void> => {
+  for (let i = 0; i < 80; i++) {
     if (await read()) return;
     await Bun.sleep(50);
   }
-  throw new Error('the map never got there');
+  throw new Error(`never got there: ${what}`);
 };
 
 /** The markers on the child with this text, as the server has them once the key press landed. */
 const marked = async (map: () => Promise<UNode>, text: string, want: string[]): Promise<void> => {
-  await until(async () => JSON.stringify(child(await map(), text).markers) === JSON.stringify(want));
-  expect(child(await map(), text).markers).toEqual(want);
+  await until(`${text} has ${want.join(' ') || 'no markers'} on the server`, async () => JSON.stringify(child(await map(), text).markers ?? []) === JSON.stringify(want));
+  expect(child(await map(), text).markers ?? []).toEqual(want);
 };
 
 /**
  * The same, and drawn on the page: d reads the markers the page holds, so pressing it again
- * before the redraw sends the same step twice (filed separately; this suite does not pin it).
+ * before the redraw sends the same step twice (#14; this suite does not pin it).
  */
 const shown = async (page: Page, map: () => Promise<UNode>, text: string, want: string[]): Promise<void> => {
   await marked(map, text, want);
-  await until(async () => JSON.stringify(await drawnMarks(page)) === JSON.stringify(want));
+  await until(`${want.join(' ')} drawn`, async () => JSON.stringify(await drawnMarks(page)) === JSON.stringify(want));
 };
 
 const texts = (n: UNode): string[] => n.children.map((c) => c.text);
@@ -142,11 +147,15 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await browser.close();
-  // The home is put back before it goes, so nothing later makes it again.
-  putBack('EDA_HOME', wasHome);
-  putBack('XDG_CONFIG_HOME', wasConfig);
-  for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+  try {
+    // Undefined when chromium did not start; the home still has to go.
+    await browser?.close();
+  } finally {
+    // The home is put back before it goes, so nothing later makes it again.
+    putBack('EDA_HOME', wasHome);
+    putBack('XDG_CONFIG_HOME', wasConfig);
+    for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('Tab adds a child, Enter a sibling after, Shift+Enter before, F2 renames', async () => {
@@ -236,8 +245,11 @@ test('F6 drills into a node, Shift+F6 comes back, and the drilled-down top canno
   page.on('dialog', (d) => void d.accept());
   // Nothing comes back to say the key press was over, so a marker that does land ends the wait.
   await page.keyboard.press('Delete');
+  // Folding the drilled-down top would save a change with nothing moving on screen.
+  await page.keyboard.press('-');
   await page.keyboard.press('f');
   await marked(map, 'stay', ['flag']);
+  expect(child(await map(), 'stay').collapsed).toBe(false);
 
   await page.keyboard.press('Shift+F6');
   await drawn(page, ['trip', 'stay', 'hotel', 'fly']);
@@ -264,6 +276,9 @@ test('? opens the key sheet, and Delete reaches no node while it is open', async
   await page.keyboard.press('Delete');
   await page.keyboard.press('Escape');
   expect(await keySheetOpen(page)).toBe(false);
+  // Right after Esc focus is still on the sheet's button for a moment, and a key pressed then
+  // is the sheet's; the browser moves focus back on its own (measured), so wait for that.
+  await until('focus leaves the closed sheet', () => page.evaluate(() => !document.activeElement?.closest('dialog')));
 
   // The Delete went nowhere, so the node takes the marker the map's keys are for.
   await page.keyboard.press('f');
@@ -286,12 +301,11 @@ test('a rename the server refuses alerts what was typed and takes the editor awa
   await page.keyboard.press('F2');
   await page.locator('input.node.edit').waitFor();
   await page.keyboard.type('renamed');
-  // The node goes under the editor; the poll redraws the map around it and leaves the editor.
+  // Gone on the server while its editor is open; the editor is held, so the save is refused.
   await call('DELETE', `/api/nodes/${stay.id}`);
-  await drawn(page, ['trip']);
 
   await page.keyboard.press('Enter');
-  await until(() => said.length > 0);
+  await until('the alert', () => said.length > 0);
   expect(said).toHaveLength(1);
   expect(said[0]).toContain('renamed');
   // The editor goes once the alert is answered and the page has redrawn.
@@ -339,9 +353,10 @@ test('1, 2, 3, d and f set markers, one priority at a time, and two quick presse
     await route.fulfill({ response });
   });
 
+
   await page.keyboard.press('1');
   await page.keyboard.press('2');
-  await until(() => answered.length === 2);
+  await until('both marker requests answered', () => answered.length === 2);
   expect(answered).toEqual(['priority-1', 'priority-2']);
   expect(child(await map(), 'stay').markers).toEqual(['priority-2']);
 
@@ -376,15 +391,18 @@ test('Alt+1 draws only the first level, Alt+0 draws them all, and the saved map 
   await drawn(page, ['trip', 'stay', 'fly']);
   // The node at the cut says what is directly under it, rather than hiding it without a trace.
   expect(await page.locator(`.node[data-id="${stay.id}"]`).locator('xpath=..').locator('button.fold').textContent()).toBe('+1');
-
-  await page.keyboard.press('Alt+0');
-  await drawn(page, ['trip', 'stay', 'hotel', 'ryokan', 'fly']);
-  expect(await page.locator('header button.levels').count()).toBe(0);
-  expect(shape(await map())).toEqual({
+  const unfolded = {
     text: 'trip',
     children: [
       { text: 'stay', children: [{ text: 'hotel', children: [{ text: 'ryokan', children: [] }] }] },
       { text: 'fly', children: [] },
     ],
-  });
+  };
+  // Checked here too: a fold saved by Alt+1 and undone by Alt+0 would look clean only at the end.
+  expect(shape(await map())).toEqual(unfolded);
+
+  await page.keyboard.press('Alt+0');
+  await drawn(page, ['trip', 'stay', 'hotel', 'ryokan', 'fly']);
+  expect(await page.locator('header button.levels').count()).toBe(0);
+  expect(shape(await map())).toEqual(unfolded);
 }, 20_000);
