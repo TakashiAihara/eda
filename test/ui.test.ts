@@ -117,8 +117,7 @@ const marked = async (map: () => Promise<UNode>, text: string, want: string[]): 
 };
 
 /**
- * The same, and drawn on the page: d reads the markers the page holds, so pressing it again
- * before the redraw sends the same step twice (#14; this suite does not pin it).
+ * The same, and drawn on the page: the next press is read from what the page holds.
  */
 const shown = async (page: Page, map: () => Promise<UNode>, text: string, want: string[]): Promise<void> => {
   await marked(map, text, want);
@@ -372,11 +371,48 @@ test('1, 2, 3, d and f set markers, one priority at a time, and two quick presse
   await shown(page, map, 'stay', ['priority-3', 'done']);
   await page.keyboard.press('d');
   await shown(page, map, 'stay', ['priority-3']);
+  // Pressed faster than the page reloads (#14): each press reads the steps already sent.
+  await page.keyboard.press('d');
+  await page.keyboard.press('d');
   await page.keyboard.press('f');
-  await shown(page, map, 'stay', ['priority-3', 'flag']);
-
+  await page.keyboard.press('f');
+  await page.keyboard.press('f');
+  await shown(page, map, 'stay', ['priority-3', 'done', 'flag']);
   await page.locator('#map .node.sel .mark.flag').waitFor();
-  expect(await drawnMarks(page)).toEqual(['priority-3', 'flag']);
+  expect(await drawnMarks(page)).toEqual(['priority-3', 'done', 'flag']);
+}, 20_000);
+
+test('a press still being saved survives the reload the press before it caused', async () => {
+  const { page, add, call, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  await open();
+  await page.locator(`.node[data-id="${stay.id}"]`).click();
+
+  // The second d (done) is held until released, so the first one's answer and reload land while
+  // it is still out; the page has to keep showing it, or the next d reads the wrong step.
+  let release = (): void => {};
+  const held = new Promise<void>((r) => (release = r));
+  await page.route('**/api/nodes/*/markers', async (route) => {
+    if ((route.request().postDataJSON() as { marker: string; on: boolean }).marker === 'done') await held;
+    await route.fulfill({ response: await route.fetch() });
+  });
+
+  const doing = page.waitForResponse('**/api/nodes/*/markers');
+  await page.keyboard.press('d');
+  await page.keyboard.press('d');
+  await doing;
+  await marked(map, 'stay', ['doing']);
+  // The reload after the first answer has to have happened before the check.
+  await page.waitForResponse('**/api/state');
+  expect(await drawnMarks(page)).toEqual(['done']);
+  await page.keyboard.press('d');
+  release();
+  await shown(page, map, 'stay', []);
+
+  // Once saved, a press is let go: a change made elsewhere then shows as it was saved.
+  await call('POST', `/api/nodes/${stay.id}/markers`, { marker: 'doing', on: true });
+  await until('doing drawn after the poll', async () => JSON.stringify(await drawnMarks(page)) === JSON.stringify(['doing']));
 }, 20_000);
 
 test('Alt+1 draws only the first level, Alt+0 draws them all, and the saved map is untouched', async () => {

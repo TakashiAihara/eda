@@ -1,4 +1,4 @@
-import { find, kaneoTaskUrl, MARKERS, type MapDoc, type Marker, type Node, type Origin, type Outline, type Suggestion } from '../src/map.ts';
+import { find, kaneoTaskUrl, MARKERS, type MapDoc, type Marker, type Node, type Origin, type Outline, setMarker as markLocally, type Suggestion } from '../src/map.ts';
 import { icon } from './icons.ts';
 import { combo, show } from './keys.ts';
 import { clampZoom, deepest, pathTo, visibleSelection } from './view.ts';
@@ -113,8 +113,28 @@ function markerMark(m: Marker): HTMLElement {
  * (priority 1 then 2, saved as 1).
  */
 let markerQueue: Promise<unknown> = Promise.resolve();
-const setMarker = (n: Node, marker: Marker, on = !(n.markers?.includes(marker) ?? false)) =>
-  (markerQueue = markerQueue.then(() => act('POST', `/api/nodes/${n.id}/markers`, { marker, on })).catch(() => {}));
+/**
+ * Presses not yet saved, applied to the page's copy at once and again after every reload: the
+ * next press (d's next step, a toggle) is read from that copy, and without them a key pressed
+ * before the redraw would send the same step twice (#14).
+ */
+let markersInFlight: { id: string; marker: Marker; on: boolean }[] = [];
+const applyInFlight = (doc: MapDoc): void => {
+  for (const p of markersInFlight) if (find(doc.root, p.id)) markLocally(doc, p.id, p.marker, p.on);
+};
+const setMarker = (n: Node, marker: Marker, on = !(n.markers?.includes(marker) ?? false)) => {
+  const p = { id: n.id, marker, on };
+  markersInFlight.push(p);
+  if (state) {
+    applyInFlight(state.doc);
+    render(state);
+  }
+  const done = () => (markersInFlight = markersInFlight.filter((x) => x !== p));
+  // A refused or failed save drops its press and reloads, so the page shows what was saved.
+  return (markerQueue = markerQueue
+    .then(() => act('POST', `/api/nodes/${n.id}/markers`, { marker, on }).finally(done))
+    .catch(() => refresh(true).catch(() => {})));
+};
 
 function renderHead(s: State): void {
   const crumbs = pathTo(s.doc.root, drilled);
@@ -389,6 +409,7 @@ async function refresh(force = false): Promise<void> {
   const { rev } = (await api('GET', '/api/rev')) as { rev: number };
   if (!force && state && rev === state.rev) return;
   state = (await api('GET', '/api/state')) as State;
+  applyInFlight(state.doc);
   if (force) (document.activeElement as HTMLElement | null)?.blur();
   render(state);
 }
