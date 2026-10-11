@@ -406,16 +406,82 @@ export function parseMarkdown(md: string): Outline {
   return root;
 }
 
+type Tree = { text: string; children: readonly Tree[] };
+const shape = (t: Tree): unknown => [t.text, t.children.map(shape)];
+
+/**
+ * Which of the map's siblings are the same nodes as which edited lines: the most text matches;
+ * among those, the most pairs that still share a child line, so a rename next to a deletion
+ * lands on the node whose children it carries and two siblings with one text are told apart by
+ * what is left under them; among those, the most whose whole subtree matches too. Each rank is
+ * worth more than everything below it can add up to.
+ *
+ * Known limit: sharing is yes or no, so one common child line (a "TODO" under many nodes) can
+ * pull a retitle across the stretch where pairing by position would have read it better (#18).
+ *
+ * shortcut: the table is quadratic in the stretch between the first and the last changed line
+ * (6000 siblings changed at both ends: about 1.5 s and 356 MB, measured); switch to Myers' diff
+ * if maps get that wide.
+ */
+function siblingMatches(kids: readonly Tree[], lines: readonly Tree[]): [number, number][] {
+  const sub = (x: Tree): string => JSON.stringify(shape(x));
+  const ka = kids.map(sub);
+  const kb = lines.map(sub);
+  // Ends that match whole are the same nodes in any best answer; peeling them off keeps the
+  // table down to the stretch that changed.
+  let head = 0;
+  while (head < ka.length && head < kb.length && ka[head] === kb[head]) head++;
+  let tail = 0;
+  while (tail < ka.length - head && tail < kb.length - head && ka[ka.length - 1 - tail] === kb[kb.length - 1 - tail]) tail++;
+  const m = ka.length - head - tail;
+  const n = kb.length - head - tail;
+  // At most min(m, n) pairs, so the ranks below a text match add up to at most step² - 1 and
+  // the ones below a shared child line to at most step - 1: text matches outweigh both, and
+  // pairs sharing a child line (retitled or not) outweigh whole-subtree matches.
+  const step = Math.min(m, n) + 1;
+  const shares = (x: Tree, y: Tree): boolean => x.children.some((c) => y.children.some((d) => d.text === c.text));
+  const gain = (i: number, j: number): number => {
+    const x = kids[head + i]!;
+    const y = lines[head + j]!;
+    const shared = shares(x, y) ? step : 0;
+    if (x.text === y.text) return step * step + shared + (ka[head + i] === kb[head + j] ? 1 : 0);
+    return shared;
+  };
+  const best: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      const g = gain(i, j);
+      best[i]![j] = Math.max(g ? best[i + 1]![j + 1]! + g : 0, best[i + 1]![j]!, best[i]![j + 1]!);
+    }
+  }
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < head; i++) pairs.push([i, i]);
+  for (let i = 0, j = 0; i < m && j < n; ) {
+    const g = gain(i, j);
+    if (g && best[i]![j] === best[i + 1]![j + 1]! + g) {
+      pairs.push([i + head, j + head]);
+      i++;
+      j++;
+    // On a tie the edited line is passed over first, so it stays in the gap beside the
+    // existing one and the two read as a rewrite: [x, a, b, y] edited to [X, b, b, Y] renames
+    // a to b rather than adding a second b.
+    } else if (best[i]![j + 1]! >= best[i + 1]![j]!) j++;
+    else i++;
+  }
+  for (let i = 0; i < tail; i++) pairs.push([ka.length - tail + i, kb.length - tail + i]);
+  return pairs;
+}
+
 /**
  * Turn an edit made to map.md behind eda's back into candidates.
  *
- * Children are matched by position: same slot with different text is an edit, slots past
- * the end are additions.
- *
- * ponytail: position matching reads an inserted-in-the-middle line as edits of every
- * sibling after it. Match by text first (LCS) if that turns out to be common.
+ * Siblings are matched by their text (see `siblingMatches`), so one line added or removed
+ * in the middle does not read as a rewrite of every line after it. What is left between two
+ * matched lines is the one rewritten stretch, paired up by position.
  * A new line keeps the lines written under it, so adopting it brings them along.
- * Deletions are not offered: removing is a person's click in the UI, not a candidate.
+ * Deletions are not offered: removing is a person's click in the UI, not a candidate, so a
+ * line a person moved shows up twice: as an addition, and still where it was (and the lines it
+ * jumped over can read as moved too).
  */
 export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
   const out: NewSuggestion[] = [];
@@ -425,23 +491,40 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
     out.push({ kind: 'edit', nodeId: doc.root.id, text: edited.text, urls: [], reason, source });
   }
   const walk = (n: Node, e: Outline): void => {
-    e.children.forEach((ec, i) => {
-      const c = n.children[i];
-      if (!c) {
-        out.push({
-          kind: 'add',
-          parentId: n.id,
-          text: ec.text,
-          urls: [],
-          reason,
-          source,
-          ...(ec.children.length ? { children: ec.children } : {}),
-        });
-        return;
+    const end: [number, number] = [n.children.length, e.children.length];
+    let afterNode = 0;
+    let afterLine = 0;
+    // Each match ends one gap and starts the next; the gap is walked in the edited order.
+    for (const [ci, ej] of [...siblingMatches(n.children, e.children), end]) {
+      for (let k = 0; k < ej - afterLine; k++) {
+        const ec = e.children[afterLine + k]!;
+        // No gap holds two lines with one text: a match took them, so anything left really changed.
+        const c = afterNode + k < ci ? n.children[afterNode + k] : undefined;
+        if (!c) {
+          out.push({
+            kind: 'add',
+            parentId: n.id,
+            text: ec.text,
+            urls: [],
+            reason,
+            source,
+            ...(ec.children.length ? { children: ec.children } : {}),
+          });
+          continue;
+        }
+        out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
+        walk(c, ec);
       }
-      if (c.text !== ec.text) out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
-      walk(c, ec);
-    });
+      if (ej < e.children.length) {
+        const c = n.children[ci]!;
+        const ec = e.children[ej]!;
+        // Matched by the children it carries rather than by its text: a retitle.
+        if (c.text !== ec.text) out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
+        walk(c, ec);
+      }
+      afterNode = ci + 1;
+      afterLine = ej + 1;
+    }
   };
   walk(doc.root, edited);
   return out;

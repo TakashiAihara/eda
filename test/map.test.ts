@@ -132,6 +132,211 @@ test('markdown round-trips and a hand edit becomes candidates, not changes', () 
   expect(d.suggestions.filter((s) => s.text === 'a2')).toHaveLength(1);
 });
 
+test('a line deleted from between its siblings leaves nothing to offer', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c', 'd']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- c\n- d\n'))).toEqual([]);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- c\n- D\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n5', text: 'D', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('the last of the siblings goes the same way as one in the middle', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- b\n'))).toEqual([]);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- b\n- C\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n4', text: 'C', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line inserted between its siblings is one addition and no edits', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- X\n- b\n- c\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'X', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line rewritten between its siblings is one edit of that line', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- B\n- c\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n3', text: 'B', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line deleted next to a rewritten one is not offered, and the rewrite lands on the first of the pair', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c', 'd']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- C\n- d\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n3', text: 'C', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a deleted line before a branch does not move the lines under the branch after it', () => {
+  const d = newMap('p');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, 'a1');
+  addChild(d, 'n1', 'b');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, 'c1');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - a1\n- c\n  - c2\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n6', text: 'c2', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('two siblings with one text are told apart by what is under them', () => {
+  const d = newMap('p');
+  const one = addChild(d, 'n1', 'a');
+  addChild(d, one.id, 'A');
+  const two = addChild(d, 'n1', 'a');
+  addChild(d, two.id, 'B');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - B\n'))).toEqual([]);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - B\n- z\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'z', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a leaf renamed to a line that holds its old text below is still a rename', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- x\n  - a\n- b\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n2', text: 'x', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n2', text: 'a', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a deletion before a matched branch does not shift the lines compared after it', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'x');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, 'A');
+  const c = addChild(d, 'n1', 'c');
+  const under = addChild(d, c.id, 'C');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - A\n- c\n  - D\n'))).toEqual([
+    { kind: 'edit', nodeId: under.id, text: 'D', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line renamed to its sibling text is a rename, not a second copy', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n- b\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n2', text: 'b', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+  // The same with both ends changed too, so the shared ends cannot settle it and the tie does.
+  const e = newMap('p');
+  for (const t of ['x', 'a', 'b', 'y']) addChild(e, 'n1', t);
+  expect(diffOutline(e, parseMarkdown('# p\n\n- X\n- b\n- b\n- Y\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n2', text: 'X', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'edit', nodeId: 'n3', text: 'b', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'edit', nodeId: 'n5', text: 'Y', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line moved down with a child added elsewhere keeps every text match', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'a');
+  addChild(d, 'n1', 'b');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, '1');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n  - 1\n- c\n  - 1\n- a\n'))).toEqual([
+    { kind: 'add', parentId: 'n3', text: '1', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n1', text: 'a', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a retitle next to a deletion lands on the node whose children it carries', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'a');
+  const b = addChild(d, 'n1', 'b');
+  addChild(d, b.id, 'b1');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, 'c1');
+  addChild(d, 'n1', 'd');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- C\n  - c1\n- d\n'))).toEqual([
+    { kind: 'edit', nodeId: c.id, text: 'C', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('two siblings with one text are told apart by the child lines left under one of them', () => {
+  const d = newMap('p');
+  const one = addChild(d, 'n1', 'same');
+  addChild(d, one.id, 'A');
+  const two = addChild(d, 'n1', 'same');
+  addChild(d, two.id, 'B');
+  addChild(d, two.id, 'C');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- same\n  - B\n'))).toEqual([]);
+  // Both share A with the line; only the second matches it whole.
+  const e = newMap('p');
+  const first = addChild(e, 'n1', 'same');
+  addChild(e, first.id, 'A');
+  const second = addChild(e, 'n1', 'same');
+  addChild(e, second.id, 'A');
+  addChild(e, second.id, 'B');
+  const z = addChild(e, 'n1', 'z');
+  // z changes too, so the shared ends do not settle it before the weights do.
+  expect(diffOutline(e, parseMarkdown('# p\n\n- same\n  - A\n  - B\n- Z\n'))).toEqual([
+    { kind: 'edit', nodeId: z.id, text: 'Z', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+  // C rewritten to D: the change lands under the second, which still carries B.
+  expect(diffOutline(d, parseMarkdown('# p\n\n- same\n  - B\n  - D\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n6', text: 'D', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a text match is never traded for two retitles', () => {
+  const d = newMap('p');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, 'z');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, 'w');
+  addChild(d, 'n1', 'b');
+  const z = { text: 'z', children: [] };
+  const w = { text: 'w', children: [] };
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n- X\n  - z\n- Y\n  - w\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'X', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' }, children: [z] },
+    { kind: 'add', parentId: 'n1', text: 'Y', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' }, children: [w] },
+  ]);
+});
+
+test('a whole-subtree match never costs two text matches', () => {
+  const d = newMap('p');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, '1');
+  addChild(d, 'n1', 'b');
+  addChild(d, 'n1', 'c');
+  // b and c both changed underneath, so only a matches whole; the two text matches still win.
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n  - x\n- c\n  - y\n- a\n  - 1\n'))).toEqual([
+    { kind: 'add', parentId: 'n4', text: 'x', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n5', text: 'y', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n1', text: 'a', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' }, children: [{ text: '1', children: [] }] },
+  ]);
+});
+
+test('two siblings swapped are read as one addition', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b']) addChild(d, 'n1', t);
+  // The tie has two answers of the same length; this pins which one, so the backtrack is not free to flip.
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n- a\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'b', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('one edit near either end of a long list of siblings is one candidate', () => {
+  const d = newMap('p');
+  for (let i = 0; i < 6000; i++) addChild(d, 'n1', `l${i}`);
+  const md = (at: number) => parseMarkdown(`# p\n\n${Array.from({ length: 6000 }, (_, i) => (i === at ? `- L${i}` : `- l${i}`)).join('\n')}\n`);
+  // The cost of peeling off the shared ends is not pinned here: measured by hand at about 100 ms
+  // with it and 1.3 s / 355 MB without, and a time limit in a test run did not tell the two apart.
+  for (const [line, id] of [[1000, 'n1002'], [5000, 'n5002']] as const) {
+    expect(diffOutline(d, md(line))).toEqual([
+      { kind: 'edit', nodeId: id, text: `L${line}`, urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    ]);
+  }
+});
+
 test('two identical new sibling lines are two candidates, and seeing the edit again adds none', () => {
   const d = newMap('p');
   const edit = parseMarkdown('# p\n\n- same\n- same\n');
