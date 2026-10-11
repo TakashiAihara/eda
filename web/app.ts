@@ -596,8 +596,9 @@ document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
   // Only the map's own selection: not a focused ghost / fold / toolbar button (their Enter
   // and Space are theirs), not a text field, not the sidebar or the key sheet. Keys not in
-  // the table (Shift+Tab, Ctrl+W and the like) stay the browser's.
-  if (editing || !state || t.closest('input, textarea, aside, header, dialog, .ghost, .fold')) return;
+  // the table (Shift+Tab, Ctrl+W and the like) stay the browser's. A closed key sheet does not
+  // count: its button can keep focus after Esc, and the map's keys would then go nowhere.
+  if (editing || !state || t.closest('input, textarea, aside, header, dialog[open], .ghost, .fold')) return;
   // A refresh can blur the sheet's own button and drop focus on the body while it is still open.
   if ((document.getElementById('keys') as HTMLDialogElement | null)?.open) return;
   const key = KEYS.find((k) => k.combos.includes(combo(e)));
