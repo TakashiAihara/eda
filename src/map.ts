@@ -435,15 +435,16 @@ function siblingMatches(kids: readonly Tree[], lines: readonly Tree[]): [number,
   while (tail < ka.length - head && tail < kb.length - head && ka[ka.length - 1 - tail] === kb[kb.length - 1 - tail]) tail++;
   const m = ka.length - head - tail;
   const n = kb.length - head - tail;
-  // At most min(m, n) pairs, so a rank worth `step` times the one below outweighs all of them:
-  // text matches, then pairs sharing a child line (retitled or not), then whole-subtree matches.
+  // At most min(m, n) pairs, so the ranks below a text match add up to at most step² - 1 and
+  // the ones below a shared child line to at most step - 1: text matches outweigh both, and
+  // pairs sharing a child line (retitled or not) outweigh whole-subtree matches.
   const step = Math.min(m, n) + 1;
   const shares = (x: Tree, y: Tree): boolean => x.children.some((c) => y.children.some((d) => d.text === c.text));
   const gain = (i: number, j: number): number => {
     const x = kids[head + i]!;
     const y = lines[head + j]!;
     const shared = shares(x, y) ? step : 0;
-    if (x.text === y.text) return step * step * step + shared + (ka[head + i] === kb[head + j] ? 1 : 0);
+    if (x.text === y.text) return step * step + shared + (ka[head + i] === kb[head + j] ? 1 : 0);
     return shared;
   };
   const best: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
