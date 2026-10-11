@@ -225,9 +225,43 @@ test('a line renamed to its sibling text is a rename, not a second copy', () => 
   expect(diffOutline(d, parseMarkdown('# p\n\n- b\n- b\n'))).toEqual([
     { kind: 'edit', nodeId: 'n2', text: 'b', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
   ]);
+  // The same with both ends changed too, so the shared ends cannot settle it and the tie does.
+  const e = newMap('p');
+  for (const t of ['x', 'a', 'b', 'y']) addChild(e, 'n1', t);
+  expect(diffOutline(e, parseMarkdown('# p\n\n- X\n- b\n- b\n- Y\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n2', text: 'X', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'edit', nodeId: 'n3', text: 'b', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'edit', nodeId: 'n5', text: 'Y', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
 });
 
-test('on a tie the edited line is passed over first', () => {
+test('a line moved down with a child added elsewhere keeps every text match', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'a');
+  addChild(d, 'n1', 'b');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, '1');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n  - 1\n- c\n  - 1\n- a\n'))).toEqual([
+    { kind: 'add', parentId: 'n3', text: '1', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n1', text: 'a', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a whole-subtree match never costs two text matches', () => {
+  const d = newMap('p');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, '1');
+  addChild(d, 'n1', 'b');
+  addChild(d, 'n1', 'c');
+  // b and c both changed underneath, so only a matches whole; the two text matches still win.
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n  - x\n- c\n  - y\n- a\n  - 1\n'))).toEqual([
+    { kind: 'add', parentId: 'n4', text: 'x', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n5', text: 'y', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+    { kind: 'add', parentId: 'n1', text: 'a', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' }, children: [{ text: '1', children: [] }] },
+  ]);
+});
+
+test('two siblings swapped are read as one addition', () => {
   const d = newMap('p');
   for (const t of ['a', 'b']) addChild(d, 'n1', t);
   // The tie has two answers of the same length; this pins which one, so the backtrack is not free to flip.
