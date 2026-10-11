@@ -406,14 +406,34 @@ export function parseMarkdown(md: string): Outline {
   return root;
 }
 
+/** The (existing, edited) index pairs of the longest common subsequence of two lists, compared on one key. */
+function lcsPairs<T>(a: readonly T[], b: readonly T[], key: (x: T) => string): [number, number][] {
+  const ka = a.map(key);
+  const kb = b.map(key);
+  const len: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      len[i]![j] = ka[i] === kb[j] ? len[i + 1]![j + 1]! + 1 : Math.max(len[i + 1]![j]!, len[i]![j + 1]!);
+    }
+  }
+  const pairs: [number, number][] = [];
+  for (let i = 0, j = 0; i < a.length && j < b.length; ) {
+    if (ka[i] === kb[j]) {
+      pairs.push([i, j]);
+      i++;
+      j++;
+    } else if (len[i + 1]![j]! >= len[i]![j + 1]!) i++;
+    else j++;
+  }
+  return pairs;
+}
+
 /**
  * Turn an edit made to map.md behind eda's back into candidates.
  *
- * Children are matched by position: same slot with different text is an edit, slots past
- * the end are additions.
- *
- * ponytail: position matching reads an inserted-in-the-middle line as edits of every
- * sibling after it. Match by text first (LCS) if that turns out to be common.
+ * Siblings are matched by their text, so one line added or removed in the middle does not
+ * read as a rewrite of every line after it. What is left between two matched lines is the
+ * one rewritten stretch, paired up by position.
  * A new line keeps the lines written under it, so adopting it brings them along.
  * Deletions are not offered: removing is a person's click in the UI, not a candidate.
  */
@@ -425,23 +445,33 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
     out.push({ kind: 'edit', nodeId: doc.root.id, text: edited.text, urls: [], reason, source });
   }
   const walk = (n: Node, e: Outline): void => {
-    e.children.forEach((ec, i) => {
-      const c = n.children[i];
-      if (!c) {
-        out.push({
-          kind: 'add',
-          parentId: n.id,
-          text: ec.text,
-          urls: [],
-          reason,
-          source,
-          ...(ec.children.length ? { children: ec.children } : {}),
-        });
-        return;
+    const end: [number, number] = [n.children.length, e.children.length];
+    let afterNode = 0;
+    let afterLine = 0;
+    // Each match ends one gap and starts the next; the gap is walked in the edited order.
+    for (const [ci, ej] of [...lcsPairs(n.children, e.children, (c) => c.text), end]) {
+      for (let k = 0; k < ej - afterLine; k++) {
+        const ec = e.children[afterLine + k]!;
+        const c = afterNode + k < ci ? n.children[afterNode + k] : undefined;
+        if (!c) {
+          out.push({
+            kind: 'add',
+            parentId: n.id,
+            text: ec.text,
+            urls: [],
+            reason,
+            source,
+            ...(ec.children.length ? { children: ec.children } : {}),
+          });
+          continue;
+        }
+        out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
+        walk(c, ec);
       }
-      if (c.text !== ec.text) out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
-      walk(c, ec);
-    });
+      if (ej < e.children.length) walk(n.children[ci]!, e.children[ej]!);
+      afterNode = ci + 1;
+      afterLine = ej + 1;
+    }
   };
   walk(doc.root, edited);
   return out;

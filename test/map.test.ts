@@ -132,6 +132,48 @@ test('markdown round-trips and a hand edit becomes candidates, not changes', () 
   expect(d.suggestions.filter((s) => s.text === 'a2')).toHaveLength(1);
 });
 
+test('a line deleted from between its siblings leaves nothing to offer', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c', 'd']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- c\n- d\n'))).toEqual([]);
+});
+
+test('a line inserted between its siblings is one addition and no edits', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- X\n- b\n- c\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'X', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line rewritten between its siblings is one edit of that line', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- B\n- c\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n3', text: 'B', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a line deleted next to a rewritten one is not offered, and the rewrite lands on the first of the pair', () => {
+  const d = newMap('p');
+  for (const t of ['a', 'b', 'c', 'd']) addChild(d, 'n1', t);
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- C\n- d\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n3', text: 'C', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a deleted line before a branch does not move the lines under the branch after it', () => {
+  const d = newMap('p');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, 'a1');
+  addChild(d, 'n1', 'b');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, 'c1');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n  - a1\n- c\n  - c2\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n6', text: 'c2', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
 test('two identical new sibling lines are two candidates, and seeing the edit again adds none', () => {
   const d = newMap('p');
   const edit = parseMarkdown('# p\n\n- same\n- same\n');
