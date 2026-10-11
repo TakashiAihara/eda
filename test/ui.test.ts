@@ -389,8 +389,9 @@ test('a press still being saved survives the reload the press before it caused',
   await open();
   await page.locator(`.node[data-id="${stay.id}"]`).click();
 
-  // The second d (done) is held until released, so the first one's answer and reload land while
-  // it is still out; the page has to keep showing it, or the next d reads the wrong step.
+  // The second d (done) waits in the queue while the first one's answer reloads the page, and is
+  // then held until released; through both the page has to keep showing it, or the next d reads
+  // the wrong step.
   let release = (): void => {};
   const held = new Promise<void>((r) => (release = r));
   await page.route('**/api/nodes/*/markers', async (route) => {
@@ -398,13 +399,12 @@ test('a press still being saved survives the reload the press before it caused',
     await route.fulfill({ response: await route.fetch() });
   });
 
-  const doing = page.waitForResponse('**/api/nodes/*/markers');
+  // Registered before the presses: the reload can finish before a later registration would see it.
+  const reloaded = page.waitForResponse('**/api/state');
   await page.keyboard.press('d');
   await page.keyboard.press('d');
-  await doing;
+  await reloaded;
   await marked(map, 'stay', ['doing']);
-  // The reload after the first answer has to have happened before the check.
-  await page.waitForResponse('**/api/state');
   expect(await drawnMarks(page)).toEqual(['done']);
   await page.keyboard.press('d');
   release();
