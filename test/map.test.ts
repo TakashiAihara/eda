@@ -247,6 +247,34 @@ test('a line moved down with a child added elsewhere keeps every text match', ()
   ]);
 });
 
+test('a retitle next to a deletion lands on the node whose children it carries', () => {
+  const d = newMap('p');
+  addChild(d, 'n1', 'a');
+  const b = addChild(d, 'n1', 'b');
+  addChild(d, b.id, 'b1');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, 'c1');
+  addChild(d, 'n1', 'd');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- a\n- C\n  - c1\n- d\n'))).toEqual([
+    { kind: 'edit', nodeId: c.id, text: 'C', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
+test('a text match is never traded for two retitles', () => {
+  const d = newMap('p');
+  const a = addChild(d, 'n1', 'a');
+  addChild(d, a.id, 'z');
+  const c = addChild(d, 'n1', 'c');
+  addChild(d, c.id, 'w');
+  addChild(d, 'n1', 'b');
+  const z = { text: 'z', children: [] };
+  const w = { text: 'w', children: [] };
+  expect(diffOutline(d, parseMarkdown('# p\n\n- b\n- X\n  - z\n- Y\n  - w\n'))).toEqual([
+    { kind: 'add', parentId: 'n1', text: 'X', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' }, children: [z] },
+    { kind: 'add', parentId: 'n1', text: 'Y', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' }, children: [w] },
+  ]);
+});
+
 test('a whole-subtree match never costs two text matches', () => {
   const d = newMap('p');
   const a = addChild(d, 'n1', 'a');

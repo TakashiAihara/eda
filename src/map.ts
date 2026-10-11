@@ -410,9 +410,11 @@ type Tree = { text: string; children: readonly Tree[] };
 const shape = (t: Tree): unknown => [t.text, t.children.map(shape)];
 
 /**
- * Which of the map's siblings are the same nodes as which edited lines: the most text matches,
- * and among those the most whose whole subtree matches too, so two siblings with one text are
- * told apart by what is under them without a subtree match ever costing a text match.
+ * Which of the map's siblings are the same nodes as which edited lines: the most text matches;
+ * among those, the most retitled lines that still share a child line with their node, so a
+ * rename next to a deletion lands on the node whose children it carries; among those, the most
+ * whose whole subtree matches too, so two siblings with one text are told apart. Each rank is
+ * worth more than everything below it can add up to.
  *
  * shortcut: the table is quadratic in the stretch between the first and the last changed line
  * (6000 siblings changed at both ends: about 1.5 s and 356 MB, measured); switch to Myers' diff
@@ -430,10 +432,15 @@ function siblingMatches(kids: readonly Tree[], lines: readonly Tree[]): [number,
   while (tail < ka.length - head && tail < kb.length - head && ka[ka.length - 1 - tail] === kb[kb.length - 1 - tail]) tail++;
   const m = ka.length - head - tail;
   const n = kb.length - head - tail;
-  // A subtree match is worth less than any one text match: there are at most min(m, n) of them.
-  const big = Math.min(m, n) + 1;
-  const gain = (i: number, j: number): number =>
-    kids[head + i]!.text !== lines[head + j]!.text ? 0 : big + (ka[head + i] === kb[head + j] ? 1 : 0);
+  // At most min(m, n) pairs, so a rank worth `step` times the one below outweighs all of them.
+  const step = Math.min(m, n) + 1;
+  const shares = (x: Tree, y: Tree): boolean => x.children.some((c) => y.children.some((d) => d.text === c.text));
+  const gain = (i: number, j: number): number => {
+    const x = kids[head + i]!;
+    const y = lines[head + j]!;
+    if (x.text === y.text) return step * step + (ka[head + i] === kb[head + j] ? 1 : 0);
+    return shares(x, y) ? step : 0;
+  };
   const best: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {
@@ -502,7 +509,13 @@ export function diffOutline(doc: MapDoc, edited: Outline): NewSuggestion[] {
         out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
         walk(c, ec);
       }
-      if (ej < e.children.length) walk(n.children[ci]!, e.children[ej]!);
+      if (ej < e.children.length) {
+        const c = n.children[ci]!;
+        const ec = e.children[ej]!;
+        // Matched by the children it carries rather than by its text: a retitle.
+        if (c.text !== ec.text) out.push({ kind: 'edit', nodeId: c.id, text: ec.text, urls: [], reason, source });
+        walk(c, ec);
+      }
       afterNode = ci + 1;
       afterLine = ej + 1;
     }
