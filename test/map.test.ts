@@ -260,6 +260,32 @@ test('a retitle next to a deletion lands on the node whose children it carries',
   ]);
 });
 
+test('two siblings with one text are told apart by the child lines left under one of them', () => {
+  const d = newMap('p');
+  const one = addChild(d, 'n1', 'same');
+  addChild(d, one.id, 'A');
+  const two = addChild(d, 'n1', 'same');
+  addChild(d, two.id, 'B');
+  addChild(d, two.id, 'C');
+  expect(diffOutline(d, parseMarkdown('# p\n\n- same\n  - B\n'))).toEqual([]);
+  // Both share A with the line; only the second matches it whole.
+  const e = newMap('p');
+  const first = addChild(e, 'n1', 'same');
+  addChild(e, first.id, 'A');
+  const second = addChild(e, 'n1', 'same');
+  addChild(e, second.id, 'A');
+  addChild(e, second.id, 'B');
+  const z = addChild(e, 'n1', 'z');
+  // z changes too, so the shared ends do not settle it before the weights do.
+  expect(diffOutline(e, parseMarkdown('# p\n\n- same\n  - A\n  - B\n- Z\n'))).toEqual([
+    { kind: 'edit', nodeId: z.id, text: 'Z', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+  // C rewritten to D: the change lands under the second, which still carries B.
+  expect(diffOutline(d, parseMarkdown('# p\n\n- same\n  - B\n  - D\n'))).toEqual([
+    { kind: 'edit', nodeId: 'n6', text: 'D', urls: [], reason: 'edited in map.md', source: { by: 'md-edit' } },
+  ]);
+});
+
 test('a text match is never traded for two retitles', () => {
   const d = newMap('p');
   const a = addChild(d, 'n1', 'a');

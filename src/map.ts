@@ -411,10 +411,13 @@ const shape = (t: Tree): unknown => [t.text, t.children.map(shape)];
 
 /**
  * Which of the map's siblings are the same nodes as which edited lines: the most text matches;
- * among those, the most retitled lines that still share a child line with their node, so a
- * rename next to a deletion lands on the node whose children it carries; among those, the most
- * whose whole subtree matches too, so two siblings with one text are told apart. Each rank is
+ * among those, the most pairs that still share a child line, so a rename next to a deletion
+ * lands on the node whose children it carries and two siblings with one text are told apart by
+ * what is left under them; among those, the most whose whole subtree matches too. Each rank is
  * worth more than everything below it can add up to.
+ *
+ * Known limit: sharing is yes or no, so one common child line (a "TODO" under many nodes) can
+ * pull a retitle across the stretch where pairing by position would have read it better (#18).
  *
  * shortcut: the table is quadratic in the stretch between the first and the last changed line
  * (6000 siblings changed at both ends: about 1.5 s and 356 MB, measured); switch to Myers' diff
@@ -432,14 +435,16 @@ function siblingMatches(kids: readonly Tree[], lines: readonly Tree[]): [number,
   while (tail < ka.length - head && tail < kb.length - head && ka[ka.length - 1 - tail] === kb[kb.length - 1 - tail]) tail++;
   const m = ka.length - head - tail;
   const n = kb.length - head - tail;
-  // At most min(m, n) pairs, so a rank worth `step` times the one below outweighs all of them.
+  // At most min(m, n) pairs, so a rank worth `step` times the one below outweighs all of them:
+  // text matches, then pairs sharing a child line (retitled or not), then whole-subtree matches.
   const step = Math.min(m, n) + 1;
   const shares = (x: Tree, y: Tree): boolean => x.children.some((c) => y.children.some((d) => d.text === c.text));
   const gain = (i: number, j: number): number => {
     const x = kids[head + i]!;
     const y = lines[head + j]!;
-    if (x.text === y.text) return step * step + (ka[head + i] === kb[head + j] ? 1 : 0);
-    return shares(x, y) ? step : 0;
+    const shared = shares(x, y) ? step : 0;
+    if (x.text === y.text) return step * step * step + shared + (ka[head + i] === kb[head + j] ? 1 : 0);
+    return shared;
   };
   const best: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
   for (let i = m - 1; i >= 0; i--) {
