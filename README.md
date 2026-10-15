@@ -2,6 +2,8 @@
 
 Mind map you grow one node at a time with an AI that can only suggest.
 
+Status: early development. No release yet; the file format and the MCP tools may still change.
+
 - The AI (a Claude Code session) can read the map and suggest **one** node or **one** change at a time. It cannot write.
 - You adopt, rewrite-then-adopt, or reject each suggestion in the browser.
 - You talk to the same Claude Code session from the map screen; your messages reach it as channel events.
@@ -62,6 +64,16 @@ A map is a directory:
 
 - `~/.config/eda/config.json`: `{ "kaneo": { "host": "https://kaneo.example" } }` — enables task links. `EDA_KANEO_HOST` overrides.
 - `EDA_HOME` (default `~/.eda`): token and running-instance registry.
+
+## Security
+
+- One token per host (`$EDA_HOME/token`), shared by every map on that host and by the MCP server. Anyone holding a map URL can open every map running on that host, and act as the AI side too.
+- `eda serve` binds `0.0.0.0` and speaks plain HTTP: the map is reachable from the whole LAN, and the token travels unencrypted. Pass `--host 127.0.0.1` to keep it local, and do not expose the port to the internet.
+- To revoke the token, stop the running maps, delete `$EDA_HOME/token`, and start them again; a new one is created.
+
+## Contributing
+
+Issues and pull requests are welcome. One rule is the point of the tool and is not up for change: the AI suggests one node or one change at a time and cannot write; only the person adopts. Changes that let the AI write to the map, adopt on its own, or send several suggestions at once will not be merged.
 
 ## Develop
 
