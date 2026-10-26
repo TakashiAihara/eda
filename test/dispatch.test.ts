@@ -4,7 +4,7 @@
  */
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -179,13 +179,13 @@ const state = async () => (await person('GET', '/api/state')).json;
  * A server on a config and a key of its own, so a test that takes one of them away does not
  * change the map every other test runs on. Both are put back before the next one starts.
  */
-const withServer = async (cfg: unknown, key: string | null, run: (call: (method: string, path: string, body?: unknown) => Promise<Answer>) => Promise<void>, kaneoPollMs?: number): Promise<void> => {
+const withServer = async (cfg: unknown, key: string | null, run: (call: (method: string, path: string, body?: unknown) => Promise<Answer>) => Promise<void>, kaneoPollMs?: number, keyCommandMs?: number): Promise<void> => {
   const path = join(home, 'eda', 'config.json');
   const was = readFileSync(path, 'utf8');
   writeFileSync(path, JSON.stringify(cfg));
   if (key === null) delete process.env['KANEO_API_KEY'];
   else process.env['KANEO_API_KEY'] = key;
-  const { server: other, stop: stopOther } = startServer({ dir: temp('eda-map-'), host: '127.0.0.1', port: 0, title: 'other', ...(kaneoPollMs === undefined ? {} : { kaneoPollMs }) });
+  const { server: other, stop: stopOther } = startServer({ dir: temp('eda-map-'), host: '127.0.0.1', port: 0, title: 'other', ...(kaneoPollMs === undefined ? {} : { kaneoPollMs }), ...(keyCommandMs === undefined ? {} : { keyCommandMs }) });
   try {
     await run(ask(`http://127.0.0.1:${other.port}`));
   } finally {
@@ -693,6 +693,96 @@ test('a spawn.command that is not an argv array turns dispatch off, and says so 
     console.error = realError;
   }
   expect(said.join('\n')).toContain('spawn.command');
+});
+
+/** Runs `run` with console.error captured, and gives back what was said. */
+const stderrOf = async (run: () => Promise<void>): Promise<string[]> => {
+  const said: string[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => said.push(args.map(String).join(' '));
+  try {
+    await run();
+  } finally {
+    console.error = realError;
+  }
+  return said;
+};
+const withKeyCommand = (keyCommand: unknown) => ({ ...config(command()), kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand } });
+
+test('without KANEO_API_KEY, the key kaneo.keyCommand prints switches the features on and is the one sent', async () => {
+  const said = await stderrOf(() =>
+    withServer(withKeyCommand(['sh', '-c', 'printf "K\\n"']), null, async (call) => {
+      expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: kaneoUrl, status: true, createTask: true, dispatch: true });
+      // The fake kaneo answers only `Bearer K`, so a listing that comes back carried that key.
+      expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
+    }),
+  );
+  expect(said).toEqual([]);
+});
+
+test('an empty KANEO_API_KEY counts as unset, so keyCommand supplies the key', async () => {
+  await withServer(withKeyCommand(['sh', '-c', 'echo K']), '', async (call) => {
+    expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
+  });
+});
+
+test('with a host, no KANEO_API_KEY and no keyCommand the features are off and nothing is said', async () => {
+  const said = await stderrOf(() =>
+    withServer(config(command()), null, async (call) => {
+      expect(((await call('GET', '/api/state')).json as any).kaneo.status).toBe(false);
+    }),
+  );
+  expect(said).toEqual([]);
+});
+
+test('a keyCommand that ignores SIGTERM is killed at the ceiling, and stderr says it timed out', async () => {
+  const started = Date.now();
+  const said = await stderrOf(() =>
+    withServer(withKeyCommand(['sh', '-c', "trap '' TERM; exec sleep 10"]), null, async (call) => {
+      expect(((await call('GET', '/api/state')).json as any).kaneo.status).toBe(false);
+    }, undefined, 300),
+  );
+  // Well under the 10 s the command would take: SIGTERM alone would have waited it out.
+  expect(Date.now() - started).toBeLessThan(3000);
+  expect(said).toEqual(['eda: kaneo.keyCommand timed out after 300 ms; the kaneo features are off']);
+});
+
+test('KANEO_API_KEY wins: keyCommand is not run when the key is already there', async () => {
+  const ran = join(home, 'keycommand-ran');
+  await withServer(withKeyCommand(['sh', '-c', `touch ${ran}; echo other`]), 'K', async (call) => {
+    expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
+  });
+  expect(existsSync(ran)).toBe(false);
+});
+
+test('a keyCommand that fails, prints no usable key, or is not an argv leaves the features off and says why in one line, without what it printed', async () => {
+  for (const [keyCommand, why] of [
+    [['sh', '-c', 'echo leaked-secret; exit 3'], 'exited 3'],
+    [['sh', '-c', 'true'], 'printed no single-line key'],
+    [['sh', '-c', 'printf "leaked-secret\\nb\\n"'], 'printed no single-line key'],
+    [['sh', '-c', 'printf "loading\\rleaked-secret\\n"'], 'printed no single-line key'],
+    [['sh', '-c', 'head -c 100000 /dev/zero | tr "\\0" k'], 'printed more than 4096 bytes'],
+    [['/nonexistent/eda-key-command'], 'could not run'],
+    ['secret-tool lookup service kaneo', 'must be a non-empty array of strings'],
+    [[], 'must be a non-empty array of strings'],
+    [['sh', 1], 'must be a non-empty array of strings'],
+  ] as const) {
+    const said = await stderrOf(() =>
+      withServer(withKeyCommand(keyCommand), null, async (call) => {
+        expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: kaneoUrl, status: false, createTask: false, dispatch: false });
+      }),
+    );
+    expect(said.length).toBe(1);
+    expect(said[0]).toContain(`kaneo.keyCommand`);
+    expect(said[0]).toContain(why);
+    expect(said[0]).not.toContain('leaked-secret');
+  }
+});
+
+test('with no kaneo host, keyCommand is not run', async () => {
+  const ran = join(home, 'keycommand-no-host');
+  await withServer({ kaneo: { keyCommand: ['sh', '-c', `touch ${ran}; echo K`] } }, null, async () => {});
+  expect(existsSync(ran)).toBe(false);
 });
 
 test('mcp.ts offers no tool for the kaneo routes', async () => {
