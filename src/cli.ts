@@ -42,7 +42,7 @@ async function main(argv: string[]): Promise<number> {
         return 1;
       }
       const session = process.env['CLAUDE_CODE_SESSION_ID'] || undefined;
-      const { server } = startServer({
+      const { server, stop: stopServer } = startServer({
         dir,
         host: values.host!,
         port: Number(values.port),
@@ -60,6 +60,7 @@ async function main(argv: string[]): Promise<number> {
       });
       const stop = (): void => {
         unregister();
+        stopServer();
         release();
         process.exit(0);
       };
