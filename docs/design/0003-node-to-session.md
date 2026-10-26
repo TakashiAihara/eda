@@ -78,7 +78,7 @@ sequenceDiagram
 }
 ```
 
-- `KANEO_API_KEY` in the environment. Without it the create / dispatch / status features are hidden; the URL link stays.
+- `KANEO_API_KEY` in the environment, or `kaneo.keyCommand`, an argv that prints the key (run once at start when the variable is not set). Without a key the create / dispatch / status features are hidden; the URL link stays.
 - `kaneo.workspace` is where the project picker lists projects from. Reading a task's status is a `GET` on the task, so status needs the host and the key only; creating a task and listing projects need a workspace as well.
 
 ## Known limits

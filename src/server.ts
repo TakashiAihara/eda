@@ -30,27 +30,35 @@ import {
 } from './map.ts';
 import { config, openMap, saveMap, syncMarkdown, token } from './store.ts';
 
-export type ServeOptions = { dir: string; host: string; port: number; title?: string; session?: string; cwd?: string; kaneoPollMs?: number };
+export type ServeOptions = { dir: string; host: string; port: number; title?: string; session?: string; cwd?: string; kaneoPollMs?: number; keyCommandMs?: number };
 
 type Handler = (req: Request, doc: MapDoc, params: Record<string, string>) => unknown | Promise<unknown>;
 
 /**
  * The key printed by `kaneo.keyCommand`, so a session can start `eda serve` without wrapping it in
- * a secret runner. An argv with no shell, run once with a short ceiling: a command that hangs must
- * not hold the map's start. Any failure is '' (the features stay off) and one line on stderr that
- * never carries what the command printed, which may be the key itself.
+ * a secret runner. An argv with no shell, run once with a ceiling. Any failure is '' (the features
+ * stay off) and one line on stderr that never carries what the command printed, which may be the
+ * key itself; the command's own stderr is dropped for the same reason.
+ *
+ * shortcut: a command that leaves a child holding stdout costs the start the whole ceiling and the
+ * child is not killed (only the command is, with SIGKILL, since SIGTERM can be ignored and Bun does
+ * not escalate); kill the group, as dispatch does, if a real keyCommand ever does that.
  */
-function keyFromCommand(raw: unknown): string {
+function keyFromCommand(raw: unknown, ceilingMs: number): string {
   if (raw === undefined) return '';
   if (!Array.isArray(raw) || raw.length === 0 || !raw.every((x) => typeof x === 'string')) {
     console.error('eda: kaneo.keyCommand must be a non-empty array of strings; the kaneo features are off');
     return '';
   }
   try {
-    const r = Bun.spawnSync(raw as string[], { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', timeout: 15_000 });
+    // maxBuffer: a key is a line, so a command that floods stdout is cut off rather than held in memory.
+    const r = Bun.spawnSync(raw as string[], { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', timeout: ceilingMs, killSignal: 'SIGKILL', maxBuffer: 4096 });
     const key = r.stdout.toString().trim();
-    if (r.exitCode === 0 && key !== '' && !key.includes('\n')) return key;
-    console.error(`eda: kaneo.keyCommand ${r.exitCode === 0 ? 'printed no single-line key' : `exited ${r.exitCode ?? `on ${r.signalCode}`}`}; the kaneo features are off`);
+    // No whitespace or control characters: a `\r` would pass a newline check and then make every
+    // request fail on the Authorization header.
+    if (r.exitCode === 0 && /^[\x21-\x7e]+$/.test(key)) return key;
+    const why = r.exitedDueToTimeout ? `timed out after ${ceilingMs} ms` : r.exitCode === 0 ? 'printed no single-line key' : `exited ${r.exitCode ?? `on ${r.signalCode}`}`;
+    console.error(`eda: kaneo.keyCommand ${why}; the kaneo features are off`);
   } catch (err) {
     console.error(`eda: kaneo.keyCommand could not run (${err instanceof Error ? err.message : String(err)}); the kaneo features are off`);
   }
@@ -67,7 +75,8 @@ export function startServer(opts: ServeOptions) {
   const kaneoWorkspace = cfg.kaneo?.workspace ?? '';
   // Read once, at start: a key that appeared later would switch the buttons on under a browser
   // that had drawn them away, and one that goes must not be used half-way through the map's life.
-  const kaneoKey = process.env['KANEO_API_KEY'] || (kaneoHost === null ? '' : keyFromCommand(cfg.kaneo?.keyCommand));
+  // An empty KANEO_API_KEY counts as unset, as an empty EDA_KANEO_HOST does.
+  const kaneoKey = process.env['KANEO_API_KEY'] || (kaneoHost === null ? '' : keyFromCommand(cfg.kaneo?.keyCommand, opts.keyCommandMs ?? 15_000));
   // A string where an argv belongs is a config mistake: taken as one it would hand the whole
   // command line to spawn as a single argument. Dispatch is off instead, and says so here —
   // at start, where the person can still see it, rather than as a 500 at the click.
@@ -185,7 +194,7 @@ export function startServer(opts: ServeOptions) {
 
   /** Without these there is nothing to create a task in, so the route says so instead of trying. */
   const needKaneo = (): void => {
-    if (!kaneo.createTask) throw new MapError('kaneo is not configured (kaneo.host, kaneo.workspace and KANEO_API_KEY)');
+    if (!kaneo.createTask) throw new MapError('kaneo is not configured (kaneo.host, kaneo.workspace and KANEO_API_KEY or kaneo.keyCommand)');
   };
 
   type TaskStatus = { status: string; number?: number; title?: string };
@@ -467,8 +476,8 @@ export function startServer(opts: ServeOptions) {
             if (!KANEO_ID.test(project)) throw new MapError(`project is not a kaneo id: ${project}`);
             const values: Record<string, string> = { number: String(number), project, repo, workspace: link.workspace, task: link.task };
             const argv = spawnCommand.map((part) => part.replace(/\{(number|project|repo|workspace|task)\}/g, (_, k: string) => values[k] ?? ''));
-            // An argv array, no shell, and this process's environment: spawn-task needs the kaneo
-            // key and herdr, which are the ones the session that started this map runs with.
+            // An argv array, no shell, and this process's environment: spawn-task needs herdr and
+            // fetches the kaneo key itself. A key eda read through kaneo.keyCommand is not in it.
             // `detached` puts the command in a group of its own, so what it leaves behind can be
             // signalled with it — at the ceiling, and when it exits holding the pipes open.
             const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe', detached: true });
