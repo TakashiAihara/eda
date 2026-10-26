@@ -4,7 +4,7 @@ Mind map you grow one node at a time with an AI that can only suggest.
 
 Status: early development. No release yet; the file format and the MCP tools may still change.
 
-- The AI (a Claude Code session) can read the map and suggest **one** node or **one** change at a time. It cannot write.
+- The AI (a Claude Code session) can read the map and suggest nodes or changes, **one** per suggestion, with up to three waiting at a time. It cannot write.
 - You adopt, rewrite-then-adopt, or reject each suggestion in the browser.
 - You talk to the same Claude Code session from the map screen; your messages reach it as channel events.
 - Nodes carry URLs, a note, links to kaneo tasks, and markers (priority 1–3, doing / done, flag, star, question) that only you set.
