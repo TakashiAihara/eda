@@ -483,3 +483,28 @@ test('Alt+1 draws only the first level, Alt+0 draws them all, and the saved map 
   expect(await page.locator('header button.levels').count()).toBe(0);
   expect(shape(await map())).toEqual(unfolded);
 }, 20_000);
+test('when kaneo refuses the project list, the node panel says why and offers another try', async () => {
+  // A kaneo that refuses with its own reason; the panel should show that reason, not a bare failure.
+  const kaneo = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => Response.json({ message: 'key revoked' }, { status: 401 }) });
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  mkdirSync(join(home, 'eda'), { recursive: true });
+  const cfg = join(home, 'eda', 'config.json');
+  writeFileSync(cfg, JSON.stringify({ kaneo: { host: `http://127.0.0.1:${kaneo.port}`, workspace: 'W1' } }));
+  const wasKey = process.env['KANEO_API_KEY'];
+  process.env['KANEO_API_KEY'] = 'K';
+  try {
+    // The config is read when the server starts, so it is taken away again right after.
+    const { page, add, open } = await ui();
+    rmSync(cfg);
+    putBack('KANEO_API_KEY', wasKey);
+    const n = await add('n1', 'hotel');
+    await open();
+    await page.locator(`.node[data-id="${n.id}"]`).click();
+    await page.getByText('プロジェクトを取得できませんでした (key revoked)').waitFor();
+    expect(await page.getByRole('button', { name: '再取得' }).isVisible()).toBe(true);
+  } finally {
+    rmSync(cfg, { force: true });
+    putBack('KANEO_API_KEY', wasKey);
+    kaneo.stop(true);
+  }
+});

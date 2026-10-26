@@ -316,19 +316,20 @@ function renderMap(s: State): void {
  * so the row can say why it is empty and offer another try rather than sitting there dead.
  */
 let projects: { id: string; name: string }[] | undefined;
-let projectsFailed = false;
+/** Why the last ask failed, kaneo's own words when it gave any; undefined while it has not failed. */
+let projectsFailed: string | undefined;
 let projectsLoading = false;
 
 async function loadProjects(): Promise<void> {
   projectsLoading = true;
   try {
     projects = (await api('GET', '/api/kaneo/projects', undefined, true)) as { id: string; name: string }[];
-    projectsFailed = false;
-  } catch {
+    projectsFailed = undefined;
+  } catch (err) {
     // Not cached as an empty list: that reads as "kaneo has no projects", leaves the button dead
     // until a reload, and hides a project created since the first ask.
     projects = undefined;
-    projectsFailed = true;
+    projectsFailed = err instanceof Error ? err.message : String(err);
   } finally {
     projectsLoading = false;
   }
@@ -338,9 +339,9 @@ async function loadProjects(): Promise<void> {
 
 /** The project picker and 「タスクにする」, with the project last used already chosen. */
 function makeTaskRow(s: State, n: Node): HTMLElement {
-  if (projectsFailed) {
+  if (projectsFailed !== undefined) {
     return h('div', { class: 'row' },
-      h('span', { class: 'small' }, 'プロジェクトを取得できませんでした'),
+      h('span', { class: 'small' }, `プロジェクトを取得できませんでした (${projectsFailed})`),
       h('button', { click: () => void loadProjects() }, '再取得'),
     );
   }
