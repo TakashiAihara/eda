@@ -4,7 +4,7 @@
  */
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -693,6 +693,65 @@ test('a spawn.command that is not an argv array turns dispatch off, and says so 
     console.error = realError;
   }
   expect(said.join('\n')).toContain('spawn.command');
+});
+
+/** Runs `run` with console.error captured, and gives back what was said. */
+const stderrOf = async (run: () => Promise<void>): Promise<string[]> => {
+  const said: string[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => said.push(args.map(String).join(' '));
+  try {
+    await run();
+  } finally {
+    console.error = realError;
+  }
+  return said;
+};
+const withKeyCommand = (keyCommand: unknown) => ({ ...config(command()), kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand } });
+
+test('without KANEO_API_KEY, the key kaneo.keyCommand prints switches the features on and is the one sent', async () => {
+  const said = await stderrOf(() =>
+    withServer(withKeyCommand(['sh', '-c', 'printf "K\\n"']), null, async (call) => {
+      expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: kaneoUrl, status: true, createTask: true, dispatch: true });
+      // The fake kaneo answers only `Bearer K`, so a listing that comes back carried that key.
+      expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
+    }),
+  );
+  expect(said).toEqual([]);
+});
+
+test('KANEO_API_KEY wins: keyCommand is not run when the key is already there', async () => {
+  const ran = join(home, 'keycommand-ran');
+  await withServer(withKeyCommand(['sh', '-c', `touch ${ran}; echo other`]), 'K', async (call) => {
+    expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
+  });
+  expect(existsSync(ran)).toBe(false);
+});
+
+test('a keyCommand that fails, prints nothing, or is not an argv leaves the features off and says why once, without what it printed', async () => {
+  for (const [keyCommand, why] of [
+    [['sh', '-c', 'echo leaked-secret; exit 3'], 'exited 3'],
+    [['sh', '-c', 'true'], 'printed no single-line key'],
+    [['sh', '-c', 'printf "a\\nb\\n"'], 'printed no single-line key'],
+    [['/nonexistent/eda-key-command'], 'could not run'],
+    ['inf-run -- printenv KANEO_API_KEY', 'must be a non-empty array of strings'],
+  ] as const) {
+    const said = await stderrOf(() =>
+      withServer(withKeyCommand(keyCommand), null, async (call) => {
+        expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: kaneoUrl, status: false, createTask: false, dispatch: false });
+      }),
+    );
+    expect(said.length).toBe(1);
+    expect(said[0]).toContain(`kaneo.keyCommand`);
+    expect(said[0]).toContain(why);
+    expect(said[0]).not.toContain('leaked-secret');
+  }
+});
+
+test('with no kaneo host, keyCommand is not run', async () => {
+  const ran = join(home, 'keycommand-no-host');
+  await withServer({ kaneo: { keyCommand: ['sh', '-c', `touch ${ran}; echo K`] } }, null, async () => {});
+  expect(existsSync(ran)).toBe(false);
 });
 
 test('mcp.ts offers no tool for the kaneo routes', async () => {

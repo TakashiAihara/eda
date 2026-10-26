@@ -115,12 +115,13 @@ function publish(path: string, body: string, mode?: number): boolean {
   }
 }
 
-export type Config = { kaneo?: { host: string; workspace?: string }; spawn?: { command: string[] } };
+export type Config = { kaneo?: { host: string; workspace?: string; keyCommand?: string[] }; spawn?: { command: string[] } };
 
 /**
  * `~/.config/eda/config.json`; `EDA_KANEO_HOST` wins. kaneo is optional: no host, no kaneo UI.
  * `workspace` is where the project picker looks, `spawn.command` the argv dispatch runs — each
  * feature needs its own key, so one without the other is the map with only the URL link.
+ * `keyCommand` is the argv that prints the API key when `KANEO_API_KEY` is not set.
  */
 export function config(): Config {
   const p = join(process.env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config'), 'eda', 'config.json');

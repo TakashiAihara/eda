@@ -34,6 +34,29 @@ export type ServeOptions = { dir: string; host: string; port: number; title?: st
 
 type Handler = (req: Request, doc: MapDoc, params: Record<string, string>) => unknown | Promise<unknown>;
 
+/**
+ * The key printed by `kaneo.keyCommand`, so a session can start `eda serve` without wrapping it in
+ * a secret runner. An argv with no shell, run once with a short ceiling: a command that hangs must
+ * not hold the map's start. Any failure is '' (the features stay off) and one line on stderr that
+ * never carries what the command printed, which may be the key itself.
+ */
+function keyFromCommand(raw: unknown): string {
+  if (raw === undefined) return '';
+  if (!Array.isArray(raw) || raw.length === 0 || !raw.every((x) => typeof x === 'string')) {
+    console.error('eda: kaneo.keyCommand must be a non-empty array of strings; the kaneo features are off');
+    return '';
+  }
+  try {
+    const r = Bun.spawnSync(raw as string[], { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', timeout: 15_000 });
+    const key = r.stdout.toString().trim();
+    if (r.exitCode === 0 && key !== '' && !key.includes('\n')) return key;
+    console.error(`eda: kaneo.keyCommand ${r.exitCode === 0 ? 'printed no single-line key' : `exited ${r.exitCode ?? `on ${r.signalCode}`}`}; the kaneo features are off`);
+  } catch (err) {
+    console.error(`eda: kaneo.keyCommand could not run (${err instanceof Error ? err.message : String(err)}); the kaneo features are off`);
+  }
+  return '';
+}
+
 export function startServer(opts: ServeOptions) {
   const doc = openMap(opts.dir, opts.title);
   const secret = token();
@@ -44,7 +67,7 @@ export function startServer(opts: ServeOptions) {
   const kaneoWorkspace = cfg.kaneo?.workspace ?? '';
   // Read once, at start: a key that appeared later would switch the buttons on under a browser
   // that had drawn them away, and one that goes must not be used half-way through the map's life.
-  const kaneoKey = process.env['KANEO_API_KEY'] ?? '';
+  const kaneoKey = process.env['KANEO_API_KEY'] || (kaneoHost === null ? '' : keyFromCommand(cfg.kaneo?.keyCommand));
   // A string where an argv belongs is a config mistake: taken as one it would hand the whole
   // command line to spawn as a single argument. Dispatch is off instead, and says so here —
   // at start, where the person can still see it, rather than as a 500 at the click.
