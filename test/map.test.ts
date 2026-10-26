@@ -32,15 +32,27 @@ test('an AI suggestion does not enter the map until a person adopts it', () => {
   expect(d.suggestions).toHaveLength(0);
 });
 
-test('one suggestion per session waits at a time', () => {
+test('three suggestions per session wait at a time', () => {
   const d = newMap('plan');
   const s = suggest(d, { kind: 'add', parentId: 'n1', text: 'a', reason: '' }, ai);
-  expect(() => suggest(d, { kind: 'add', parentId: 'n1', text: 'b', reason: '' }, ai)).toThrow(/one at a time/);
-  // another session (or model) has its own slot
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'a2', reason: '' }, ai);
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'a3', reason: '' }, ai);
+  expect(() => suggest(d, { kind: 'add', parentId: 'n1', text: 'b', reason: '' }, ai)).toThrow(/at most 3 at a time/);
+  // another session has its own slots
   suggest(d, { kind: 'add', parentId: 'n1', text: 'b', reason: '' }, { by: 'ai', session: 'S2' });
   reject(d, s.id);
   suggest(d, { kind: 'add', parentId: 'n1', text: 'c', reason: '' }, ai);
-  expect(d.suggestions.map((x) => x.text)).toEqual(['b', 'c']);
+  expect(d.suggestions.map((x) => x.text)).toEqual(['a2', 'a3', 'b', 'c']);
+});
+
+test('adopting a suggestion frees its slot', () => {
+  const d = newMap('plan');
+  const s = suggest(d, { kind: 'add', parentId: 'n1', text: 'a', reason: '' }, ai);
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'b', reason: '' }, ai);
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'c', reason: '' }, ai);
+  accept(d, s.id);
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'd', reason: '' }, ai);
+  expect(d.suggestions.map((x) => x.text)).toEqual(['b', 'c', 'd']);
 });
 
 test('adopting after rewriting keeps the AI as origin and uses the person\'s text and urls', () => {

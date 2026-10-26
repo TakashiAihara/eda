@@ -16,7 +16,7 @@
 | add suggestion | "put this one node under that node" | `Suggestion` with `kind: add` |
 | edit suggestion | "change this node's text and/or attach these URLs" | `Suggestion` with `kind: edit` |
 | adopt | A person accepts a candidate, optionally after rewriting its text/URLs | `POST /api/suggestions/:id/accept` |
-| pending slot | At most one AI suggestion per session waits at a time | `suggest()` |
+| pending slot | Up to `MAX_PENDING` (3) AI suggestions per session wait at a time | `suggest()` |
 | task link | A kaneo task stored as workspace/project/task ids | `TaskLink` |
 | instance | A running `eda serve`, registered so the MCP server can find it | `~/.eda/instances/<pid>.json` |
 | marker | One of a fixed set on a node: priority-1..3, doing, done, flag, star, question. A priority and a progress state each exclude the others of their group. Set by a person only; the AI reads them | `Node.markers`, `MARKERS` / `setMarker` in `src/map.ts` |

@@ -6,7 +6,7 @@ Status: slice 1 implemented (PR #8); its branch colours removed again (PR #11). 
 
 - Request (kaneo eda#5, verbatim): 「あとは design と icon か shortcut とか 整えていきたいな。あと xmind や mindmeister のコンセプトとかも取り入れていきたい。」
 - v1 draws the tree with grey CSS borders, marks nodes with emoji (🔗 ✓ 📝), and has XMind's editing keys with no way to discover them.
-- The rule from v1 stays: the AI cannot write the map and suggests one node at a time. Nothing here adds an MCP tool.
+- The rule from v1 stays: the AI cannot write the map and suggests one node per suggestion (up to three waiting per session). Nothing here adds an MCP tool.
 
 ## Conclusion
 
