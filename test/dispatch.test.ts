@@ -738,7 +738,7 @@ test('with a host, no KANEO_API_KEY and no keyCommand the features are off and n
 test('a keyCommand that ignores SIGTERM is killed at the ceiling, and stderr says it timed out', async () => {
   const started = Date.now();
   const said = await stderrOf(() =>
-    withServer(withKeyCommand(['sh', '-c', "trap '' TERM; sleep 10; echo K"]), null, async (call) => {
+    withServer(withKeyCommand(['sh', '-c', "trap '' TERM; exec sleep 10"]), null, async (call) => {
       expect(((await call('GET', '/api/state')).json as any).kaneo.status).toBe(false);
     }, undefined, 300),
   );
@@ -761,7 +761,7 @@ test('a keyCommand that fails, prints no usable key, or is not an argv leaves th
     [['sh', '-c', 'true'], 'printed no single-line key'],
     [['sh', '-c', 'printf "leaked-secret\\nb\\n"'], 'printed no single-line key'],
     [['sh', '-c', 'printf "loading\\rleaked-secret\\n"'], 'printed no single-line key'],
-    [['sh', '-c', 'head -c 100000 /dev/zero | tr "\\0" k'], 'on SIGKILL'],
+    [['sh', '-c', 'head -c 100000 /dev/zero | tr "\\0" k'], 'printed more than 4096 bytes'],
     [['/nonexistent/eda-key-command'], 'could not run'],
     ['secret-tool lookup service kaneo', 'must be a non-empty array of strings'],
     [[], 'must be a non-empty array of strings'],

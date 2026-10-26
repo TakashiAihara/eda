@@ -57,7 +57,7 @@ function keyFromCommand(raw: unknown, ceilingMs: number): string {
     // No whitespace or control characters: a `\r` would pass a newline check and then make every
     // request fail on the Authorization header.
     if (r.exitCode === 0 && /^[\x21-\x7e]+$/.test(key)) return key;
-    const why = r.exitedDueToTimeout ? `timed out after ${ceilingMs} ms` : r.exitCode === 0 ? 'printed no single-line key' : `exited ${r.exitCode ?? `on ${r.signalCode}`}`;
+    const why = r.exitedDueToTimeout ? `timed out after ${ceilingMs} ms` : r.exitedDueToMaxBuffer ? 'printed more than 4096 bytes' : r.exitCode === 0 ? 'printed no single-line key' : `exited ${r.exitCode ?? `on ${r.signalCode}`}`;
     console.error(`eda: kaneo.keyCommand ${why}; the kaneo features are off`);
   } catch (err) {
     console.error(`eda: kaneo.keyCommand could not run (${err instanceof Error ? err.message : String(err)}); the kaneo features are off`);
