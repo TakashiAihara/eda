@@ -73,7 +73,7 @@ A map is a directory:
 
 ## Contributing
 
-Issues and pull requests are welcome. One rule is the point of the tool and is not up for change: the AI suggests one node or one change at a time and cannot write; only the person adopts. Changes that let the AI write to the map, adopt on its own, or send several suggestions at once will not be merged.
+Issues and pull requests are welcome. One rule is the point of the tool and is not up for change: each AI suggestion is one node or one change, a session has at most three waiting, and the AI cannot write; only the person adopts. Changes that let the AI write to the map, adopt on its own, or send many nodes in one suggestion will not be merged.
 
 ## Develop
 

@@ -38,11 +38,21 @@ test('three suggestions per session wait at a time', () => {
   suggest(d, { kind: 'add', parentId: 'n1', text: 'a2', reason: '' }, ai);
   suggest(d, { kind: 'add', parentId: 'n1', text: 'a3', reason: '' }, ai);
   expect(() => suggest(d, { kind: 'add', parentId: 'n1', text: 'b', reason: '' }, ai)).toThrow(/at most 3 at a time/);
-  // another session (or model) has its own slots
+  // another session has its own slots
   suggest(d, { kind: 'add', parentId: 'n1', text: 'b', reason: '' }, { by: 'ai', session: 'S2' });
   reject(d, s.id);
   suggest(d, { kind: 'add', parentId: 'n1', text: 'c', reason: '' }, ai);
   expect(d.suggestions.map((x) => x.text)).toEqual(['a2', 'a3', 'b', 'c']);
+});
+
+test('adopting a suggestion frees its slot', () => {
+  const d = newMap('plan');
+  const s = suggest(d, { kind: 'add', parentId: 'n1', text: 'a', reason: '' }, ai);
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'b', reason: '' }, ai);
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'c', reason: '' }, ai);
+  accept(d, s.id);
+  suggest(d, { kind: 'add', parentId: 'n1', text: 'd', reason: '' }, ai);
+  expect(d.suggestions.map((x) => x.text)).toEqual(['b', 'c', 'd']);
 });
 
 test('adopting after rewriting keeps the AI as origin and uses the person\'s text and urls', () => {

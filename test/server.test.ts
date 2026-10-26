@@ -47,6 +47,7 @@ test('Claude reads, suggests three nodes, is refused a fourth, and the person ad
 
   const { json } = await person('GET', '/api/state');
   expect(json.doc.root.children).toHaveLength(0);
+  expect(json.doc.suggestions.map((s: any) => s.text)).toEqual(['where to stay', 'budget', 'dates']);
   const id = json.doc.suggestions[0].id;
   await person('POST', `/api/suggestions/${id}/accept`, { text: 'hotel' });
   const after = (await person('GET', '/api/state')).json.doc;

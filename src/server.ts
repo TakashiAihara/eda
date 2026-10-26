@@ -94,7 +94,7 @@ export function startServer(opts: ServeOptions) {
     };
 
   /**
-   * Who is suggesting. The session is required: it is the key of the one pending slot,
+   * Who is suggesting. The session is required: it is the key of the pending slots,
    * and without it every caller would share a slot and leave no provenance.
    * No model is taken from the request — several models are not built yet (see the
    * design doc), and a caller-chosen label would be a way around the slot.
