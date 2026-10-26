@@ -251,19 +251,19 @@ export type AiInput =
 /**
  * Queue one suggestion from an AI.
  *
- * One pending suggestion per session (and per model, once models exist) is the structural half of "one node at a time":
- * a model that loops would otherwise pile up twenty candidates, which is the giant map
+ * A small cap on pending suggestions per session (and per model, once models exist) is the structural half of
+ * "one node at a time": a model that loops would otherwise pile up twenty candidates, which is the giant map
  * again with an extra click per node.
  */
-/** How many AI suggestions one session may have waiting. Open question D-12 (1 = the requirement as written). */
-export const MAX_PENDING = 1;
+/** How many AI suggestions one session may have waiting. 3 so the person picks among a few (D-12). */
+export const MAX_PENDING = 3;
 
 export function suggest(doc: MapDoc, input: AiInput, source: { by: 'ai'; session?: string; model?: string }): Suggestion {
   const waiting = doc.suggestions.filter(
     (s) => s.source.by === 'ai' && s.source.session === source.session && s.source.model === source.model,
   );
   if (waiting.length >= MAX_PENDING) {
-    throw new MapError(`${waiting.map((w) => w.id).join(', ')} still waiting for the person; one at a time`, 409);
+    throw new MapError(`${waiting.map((w) => w.id).join(', ')} still waiting for the person; at most ${MAX_PENDING} at a time`, 409);
   }
   const urls = (input.urls ?? []).map(checkUrl);
   const reason = input.reason.trim();

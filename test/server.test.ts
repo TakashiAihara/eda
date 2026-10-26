@@ -38,10 +38,12 @@ test('the page is served', async () => {
   expect(await r.text()).toContain('<aside>');
 });
 
-test('Claude reads, suggests one node, is refused a second, and the person adopts', async () => {
+test('Claude reads, suggests three nodes, is refused a fourth, and the person adopts', async () => {
   expect(await runTool(claude, 'read_map', {})).toContain('- [n1] trip');
   expect(await runTool(claude, 'suggest_node', { parent_id: 'n1', text: 'where to stay', reason: 'r' })).toMatch(/waiting/);
-  await expect(runTool(claude, 'suggest_node', { parent_id: 'n1', text: 'food', reason: 'r' })).rejects.toThrow(/one at a time/);
+  await runTool(claude, 'suggest_node', { parent_id: 'n1', text: 'budget', reason: 'r' });
+  await runTool(claude, 'suggest_node', { parent_id: 'n1', text: 'dates', reason: 'r' });
+  await expect(runTool(claude, 'suggest_node', { parent_id: 'n1', text: 'food', reason: 'r' })).rejects.toThrow(/at most 3 at a time/);
 
   const { json } = await person('GET', '/api/state');
   expect(json.doc.root.children).toHaveLength(0);
@@ -51,6 +53,9 @@ test('Claude reads, suggests one node, is refused a second, and the person adopt
   expect(after.root.children[0].text).toBe('hotel');
   expect(after.root.children[0].origin).toEqual({ by: 'ai', session: 'S1' });
   expect(readFileSync(join(dir, 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n');
+  // later tests expect no suggestion left waiting
+  for (const s of after.suggestions) await person('POST', `/api/suggestions/${s.id}/reject`);
+  expect((await person('GET', '/api/state')).json.doc.suggestions).toHaveLength(0);
 });
 
 test('the session that started the map is recorded for resume', async () => {

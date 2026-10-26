@@ -116,7 +116,7 @@ export const TOOLS = [
   {
     name: 'suggest_node',
     description:
-      'Suggest ONE new node under an existing node. It does not enter the map: the person adopts, edits or rejects it. Only one suggestion of yours can wait at a time.',
+      'Suggest ONE new node under an existing node. It does not enter the map: the person adopts, edits or rejects it. Up to three suggestions of yours can wait at a time.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -217,7 +217,7 @@ export async function runMcp(): Promise<void> {
         'To start a map, run `eda serve <dir> --title "<theme>"` in the background and give the person the url it prints. It records this session, so read_map and the chat work from then on.',
         'Do not edit map.md or eda.json yourself: map.md edits only come back as candidates for the person, and eda.json is overwritten by the server.',
         'Messages the person types in the map arrive as <channel source="eda" map="..." node_id="...">. Answer them with the reply tool, and when a node would help, offer exactly one with suggest_node.',
-        'Wait for the person to adopt or reject a suggestion before suggesting again; the outcome arrives as a channel event with kind="decision". Never try to build out the map.',
+        'Up to three of your suggestions can wait at once; when three are waiting, wait for the person to adopt or reject one before suggesting again; the outcome arrives as a channel event with kind="decision". Never try to build out the map.',
       ].join(' '),
     },
   );
