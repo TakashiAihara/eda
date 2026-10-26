@@ -243,7 +243,7 @@ export function startServer(opts: ServeOptions) {
   }
 
   /** owner/name, the shape a git remote takes. Checked here rather than by the command, which has none. */
-  const REPO = /^(?!\.+$)[A-Za-z0-9_.][A-Za-z0-9_.-]*\/(?!\.+$)[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
+  const REPO = /^(?!\.+\/)[A-Za-z0-9_.][A-Za-z0-9_.-]*\/(?!\.+$)[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
   /** Kaneo's own ids. Narrow, so a value that reaches argv can never read as an option. */
   const KANEO_ID = /^[A-Za-z0-9_]+$/;
 

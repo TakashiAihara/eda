@@ -452,7 +452,7 @@ test('the project the command is given is kaneo\'s, not the one the link names',
 
 test('dispatch refuses a repo that is not owner/name, so nothing else reaches argv', async () => {
   writeFileSync(argvFile, '');
-  for (const repo of ['eda', 'a/b; rm -rf /', '--force/x', 'a/b/c', '../..', './.', 'a/..', 'a/.']) {
+  for (const repo of ['eda', 'a/b; rm -rf /', '--force/x', 'a/b/c', '../..', './.', 'a/..', 'a/.', '../x', './x']) {
     expect((await person('POST', `/api/nodes/${booking}/tasks/t1/dispatch`, { repo })).status).toBe(400);
   }
   expect(readFileSync(argvFile, 'utf8')).toBe('');
