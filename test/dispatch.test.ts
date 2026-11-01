@@ -846,6 +846,45 @@ test('the key read through keyCommand is not handed to the dispatched command', 
   });
 });
 
+/** What a command dispatched by a real `eda serve` sees: an in-process server's child gets the test runner's start-up env. */
+const dispatchedSees = async (key: string): Promise<string> => {
+  tasks.set('t10', { id: 't10', number: 50, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
+  const cfgHome = temp('eda-childenv-cfg-');
+  mkdirSync(join(cfgHome, 'eda'), { recursive: true });
+  const cfg = { kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand: ['sh', '-c', 'echo KC'] }, spawn: { command: ['sh', '-c', 'echo "key=[$KANEO_API_KEY] other=[$EDA_TEST_OTHER]"'] } };
+  writeFileSync(join(cfgHome, 'eda', 'config.json'), JSON.stringify(cfg));
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), XDG_CONFIG_HOME: cfgHome, EDA_HOME: temp('eda-childenv-home-'), KANEO_API_KEY: key, EDA_TEST_OTHER: 'kept' };
+  delete env['CLAUDE_CODE_SESSION_ID'];
+  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', 'src', 'cli.ts'), 'serve', temp('eda-childenv-map-'), '--host', '127.0.0.1'], { env, cwd: temp('eda-childenv-cwd-'), stdout: 'pipe', stderr: 'ignore' });
+  try {
+    const reader = proc.stdout.getReader();
+    let out = '';
+    while (!out.includes('\n')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += new TextDecoder().decode(value);
+    }
+    const u = new URL((JSON.parse(out.split('\n')[0]!) as { url: string }).url);
+    const post = (path: string, body: unknown): Promise<Response> =>
+      fetch(`http://127.0.0.1:${u.port}${path}`, { method: 'POST', headers: { authorization: `Bearer ${u.hash.slice('#t='.length)}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await post('/api/nodes/n1/tasks', { url: 'http://k/dashboard/workspace/W1/project/p1/task/t10' })).status).toBe(200);
+    const res = await post('/api/nodes/n1/tasks/t10/dispatch', { repo: 'o/r' });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { output: string }).output;
+  } finally {
+    proc.kill();
+    await proc.exited;
+  }
+};
+
+test('a KANEO_API_KEY eda refused is taken out of the dispatched command, and the rest of the environment stays', async () => {
+  expect(await dispatchedSees('K\r')).toContain('key=[] other=[kept]');
+});
+
+test('a KANEO_API_KEY eda accepted reaches the dispatched command', async () => {
+  expect(await dispatchedSees('K')).toContain('key=[K] other=[kept]');
+});
+
 test("keyCommand's own stderr never reaches eda serve's stderr", async () => {
   const cfgHome = temp('eda-keycmd-cfg-');
   mkdirSync(join(cfgHome, 'eda'), { recursive: true });
