@@ -9,6 +9,10 @@ const temp = (prefix: string): string => {
   made.push(d);
   return d;
 };
+// Registered before anything below can throw, so a failed import still leaves nothing behind.
+afterAll(() => {
+  for (const d of made) rmSync(d, { recursive: true, force: true });
+});
 
 const home = temp('eda-home-');
 process.env['EDA_HOME'] = home;
@@ -20,10 +24,7 @@ const { loadMap, token } = await import('../src/store.ts');
 
 const dir = temp('eda-map-');
 const { server, stop } = startServer({ dir, host: '127.0.0.1', port: 0, title: 'trip', session: 'S1', cwd: '/w' });
-afterAll(() => {
-  stop();
-  for (const d of made) rmSync(d, { recursive: true, force: true });
-});
+afterAll(() => stop());
 
 const base = `http://127.0.0.1:${server.port}`;
 const person = async (method: string, path: string, body?: unknown) => {
