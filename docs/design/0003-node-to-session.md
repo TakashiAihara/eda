@@ -67,7 +67,7 @@ sequenceDiagram
 - So `spawn.command` must not leave anything it needs running in its own process group. `spawn-task` qualifies: claude runs in a herdr pane, under the herdr server.
 - Stopping `eda serve` kills the groups of dispatches still running, since their ceilings stop with it.
 - The command inherits `eda serve`'s environment, `CLAUDE_CODE_SESSION_ID` included. `spawn-task` records that as the 委譲元, so every task dispatched from the map is recorded as delegated by the session that started the map, and reports back to it — the map's session is the hub, and the person's click is not a separate session of its own.
-- eda needs the key to read the tasks: `KANEO_API_KEY` in `eda serve`'s environment, or else the line `kaneo.keyCommand` prints at start (#24). The command gets eda's environment and nothing more, so a key eda read through `keyCommand` does not reach it; a command that needs the key fetches it itself, as `spawn-task` does.
+- eda needs the key to read the tasks: `KANEO_API_KEY` in `eda serve`'s environment, or else the line `kaneo.keyCommand` prints at start (#24). The command gets eda's environment and nothing more, so a key eda read through `keyCommand` does not reach it, and a `KANEO_API_KEY` eda refused is taken out (#34); a command that needs the key fetches it itself, as `spawn-task` does.
 
 ## Configuration
 

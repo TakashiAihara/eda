@@ -88,6 +88,9 @@ export function startServer(opts: ServeOptions) {
   const envKeyOk = isHeaderKey(envKey);
   if (kaneoHost !== null && envKey !== '' && !envKeyOk) console.error('eda: KANEO_API_KEY is not a single run of printable ASCII; it is ignored');
   const kaneoKey = kaneoHost === null ? '' : envKeyOk ? envKey : keyFromCommand(cfg.kaneo?.keyCommand, opts.keyCommandMs ?? 15_000);
+  // A refused key is left out of a dispatched command's environment, so one that fetches its own
+  // key falls back to its own source instead of failing on this one (#34).
+  const dispatchEnv = envKey !== '' && !envKeyOk ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'KANEO_API_KEY')) : undefined;
   // A string where an argv belongs is a config mistake: taken as one it would hand the whole
   // command line to spawn as a single argument. Dispatch is off instead, and says so here —
   // at start, where the person can still see it, rather than as a 500 at the click.
@@ -485,10 +488,11 @@ export function startServer(opts: ServeOptions) {
             const values: Record<string, string> = { number: String(number), project, repo, workspace: link.workspace, task: link.task };
             const argv = spawnCommand.map((part) => part.replace(/\{(number|project|repo|workspace|task)\}/g, (_, k: string) => values[k] ?? ''));
             // An argv array, no shell, and this process's environment: spawn-task needs herdr and
-            // fetches the kaneo key itself. A key eda read through kaneo.keyCommand is not in it.
+            // fetches the kaneo key itself. A key eda read through kaneo.keyCommand is not in it,
+            // nor is one it refused.
             // `detached` puts the command in a group of its own, so what it leaves behind can be
             // signalled with it — at the ceiling, and when it exits holding the pipes open.
-            const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe', detached: true });
+            const proc = Bun.spawn(argv, { ...(dispatchEnv === undefined ? {} : { env: dispatchEnv }), stdout: 'pipe', stderr: 'pipe', detached: true });
             running.add(proc.pid);
             const readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
             let timedOut = false;
