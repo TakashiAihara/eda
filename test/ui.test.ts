@@ -13,7 +13,7 @@ process.env['EDA_HOME'] = home;
 process.env['XDG_CONFIG_HOME'] = home;
 // Imported after the home is set, so nothing the import does on its own can see the real one.
 const { startServer } = await import('../src/server.ts');
-const { token } = await import('../src/store.ts');
+const { aiToken, token } = await import('../src/store.ts');
 
 type UNode = { id: string; text: string; children: UNode[]; collapsed?: boolean; markers?: string[] };
 
@@ -32,6 +32,7 @@ const ui = async (): Promise<{
   page: Page;
   call: (method: string, path: string, body?: unknown) => Promise<any>;
   add: (parentId: string, text: string) => Promise<UNode>;
+  suggest: (parentId: string, text: string) => Promise<void>;
   map: () => Promise<UNode>;
   open: () => Promise<void>;
 }> => {
@@ -61,6 +62,15 @@ const ui = async (): Promise<{
     page,
     call,
     add: async (parentId: string, text: string) => (await call('POST', '/api/nodes', { parentId, text })) as UNode,
+    // As the MCP server sends one: the AI's token and a session of its own.
+    suggest: async (parentId: string, text: string) => {
+      const r = await fetch(`${base}/api/ai/suggest`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${aiToken()}`, 'content-type': 'application/json', 'x-eda-session': 'S-ui' },
+        body: JSON.stringify({ kind: 'add', parentId, text, reason: '' }),
+      });
+      if (!r.ok) throw new Error(`suggest: ${r.status} ${await r.text()}`);
+    },
     map: async () => ((await call('GET', '/api/state')) as { doc: { root: UNode } }).doc.root,
     open: async () => {
       // The token arrives in the fragment once; the page keeps it from then on.
@@ -92,6 +102,9 @@ const focusId = (page: Page): Promise<string | null> =>
 
 const zoomOf = (page: Page): Promise<string | null> =>
   page.evaluate(() => document.querySelector<HTMLElement>('.tree')?.style.zoom ?? null);
+
+/** A node's own fold button, not the reject buttons of the ideas drawn under it. */
+const foldButton = (page: Page, id: string) => page.locator(`.node[data-id="${id}"]`).locator('xpath=..').locator(':scope > button.fold');
 
 const keySheetOpen = (page: Page): Promise<boolean> => page.evaluate(() => (document.getElementById('keys') as HTMLDialogElement).open);
 
@@ -483,6 +496,114 @@ test('Alt+1 draws only the first level, Alt+0 draws them all, and the saved map 
   expect(await page.locator('header button.levels').count()).toBe(0);
   expect(shape(await map())).toEqual(unfolded);
 }, 20_000);
+test('the zoom buttons zoom out, in and back, and leave the map its keys', async () => {
+  const { page, add, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  await open();
+
+  await page.locator(`.node[data-id="${stay.id}"]`).click();
+  for (let i = 0; i < 3; i++) await page.locator('header [data-key="zoom-in"]').click();
+  expect(await zoomOf(page)).toBe('1.3');
+  expect(await page.locator('header .zoom').textContent()).toBe('130%');
+  await page.locator('header [data-key="zoom-out"]').click();
+  expect(await zoomOf(page)).toBe('1.2');
+  expect(await page.locator('header .zoom').textContent()).toBe('120%');
+  // From 120%, where one step out would not reach 100% too.
+  await page.locator('header [data-key="zoom-reset"]').click();
+  expect(await zoomOf(page)).toBe('1');
+  expect(await page.locator('header .zoom').textContent()).toBe('100%');
+
+  // A click on a zoom button does not take the keys away from the selected node.
+  await page.keyboard.press('f');
+  await marked(map, 'stay', ['flag']);
+}, 20_000);
+
+test('the +N at a level limit shows every level again and saves no fold', async () => {
+  const { page, add, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  const hotel = await add(stay.id, 'hotel');
+  // Two levels under the cut, so "every level" is told from "one more".
+  await add(hotel.id, 'ryokan');
+  await add(trip.id, 'fly');
+  await open();
+
+  await page.locator(`.node[data-id="${trip.id}"]`).click();
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  const cut = foldButton(page, stay.id);
+  expect(await cut.textContent()).toBe('+1');
+  await cut.click();
+  await drawn(page, ['trip', 'stay', 'hotel', 'ryokan', 'fly']);
+  expect(await page.locator('header button.levels').count()).toBe(0);
+  // Given a moment for a fold the click might have sent to land.
+  await Bun.sleep(300);
+  expect(shape(await map())).toEqual({ text: 'trip', children: [{ text: 'stay', children: [{ text: 'hotel', children: [{ text: 'ryokan', children: [] }] }] }, { text: 'fly', children: [] }] });
+}, 20_000);
+
+test('a folded node at the level limit opens with a click and its children are drawn, not only unfolded on the server', async () => {
+  const { page, call, add, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  const hotel = await add(stay.id, 'hotel');
+  // A level below hotel, so "one level more" is told from "every level".
+  await add(hotel.id, 'ryokan');
+  const fly = await add(trip.id, 'fly');
+  // Something the limit itself hides, so Alt+1 is seen to have cut.
+  await add(fly.id, 'jal');
+  await call('PATCH', `/api/nodes/${stay.id}`, { collapsed: true });
+  await open();
+
+  await page.locator(`.node[data-id="${trip.id}"]`).click();
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  await page.locator('header button.levels').waitFor();
+  const fold = foldButton(page, stay.id);
+  expect(await fold.textContent()).toBe('+1');
+  await fold.click();
+  // Unfolded on the server and drawn on the page: opening it has to reach past the limit too.
+  await until('stay unfolded on the server', async () => child(await map(), 'stay').collapsed !== true);
+  // One level more, not all of them: ryokan stays under the limit, now at 2.
+  await drawn(page, ['trip', 'stay', 'hotel', 'fly', 'jal']);
+  expect(await page.locator('header button.levels').textContent()).toBe('2 レベルまで表示中 ✕');
+}, 20_000);
+
+test('the count at a level limit takes in the suggestions waiting there, folded or not', async () => {
+  const { page, call, add, suggest, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  const hotel = await add(stay.id, 'hotel');
+  await add(trip.id, 'fly');
+  // Two ideas waiting under stay and one under hotel, as the AI side sends them: three, the most
+  // one session may have waiting (MAX_PENDING), so a fourth would be refused.
+  await suggest(stay.id, 'ryokan');
+  await suggest(stay.id, 'hostel');
+  await suggest(hotel.id, 'breakfast');
+  await open();
+
+  const foldAt = (id: string) => foldButton(page, id);
+  await page.locator(`.node[data-id="${trip.id}"]`).click();
+  // Cut at stay: its one child and the two ideas under it are what is hidden there.
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  expect(await foldAt(stay.id).textContent()).toBe('+3');
+  // Cut at hotel: the idea under it, and no hotel child, since it has none.
+  await page.keyboard.press('Alt+2');
+  await drawn(page, ['trip', 'stay', 'hotel', 'ryokan', 'hostel', 'fly']);
+  expect(await foldAt(hotel.id).textContent()).toBe('+1');
+
+  // Folded at the cut: the same count, from the fold button.
+  await page.keyboard.press('Alt+0');
+  await call('PATCH', `/api/nodes/${stay.id}`, { collapsed: true });
+  // Folded, the ideas still show under it (only the cut hides them), and the count is its child alone.
+  await drawn(page, ['trip', 'stay', 'ryokan', 'hostel', 'fly']);
+  expect(await foldAt(stay.id).textContent()).toBe('+1');
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  expect(await foldAt(stay.id).textContent()).toBe('+3');
+}, 20_000);
+
 test('when kaneo refuses the project list, the node panel says why and offers another try', async () => {
   // A kaneo that refuses with its own reason; the panel should show that reason, not a bare failure.
   const kaneo = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => Response.json({ message: 'key revoked' }, { status: 401 }) });
