@@ -785,20 +785,22 @@ test('with no kaneo host, keyCommand is not run', async () => {
   expect(existsSync(ran)).toBe(false);
 });
 
-test('an empty kaneo.host is no host: keyCommand is not run and every kaneo feature is off', async () => {
-  const ran = join(home, 'keycommand-empty-host');
-  const cfg = { kaneo: { host: '', workspace: 'W1', keyCommand: ['sh', '-c', `touch ${ran}; echo K`] }, spawn: { command: command() } };
-  await withServer(cfg, null, async (call) => {
-    expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: null, status: false, createTask: false, dispatch: false });
-  });
-  expect(existsSync(ran)).toBe(false);
-  await withServer(cfg, 'K', async (call) => {
-    expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: null, status: false, createTask: false, dispatch: false });
-  });
+test('an empty, blank or non-string kaneo.host is no host: keyCommand is not run and every kaneo feature is off', async () => {
+  for (const host of ['', '   ', 1]) {
+    const ran = join(home, 'keycommand-empty-host');
+    const cfg = { kaneo: { host, workspace: 'W1', keyCommand: ['sh', '-c', `touch ${ran}; echo K`] }, spawn: { command: command() } };
+    await withServer(cfg, null, async (call) => {
+      expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: null, status: false, createTask: false, dispatch: false });
+    });
+    expect(existsSync(ran)).toBe(false);
+    await withServer(cfg, 'K', async (call) => {
+      expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: null, status: false, createTask: false, dispatch: false });
+    });
+  }
 });
 
 test('a KANEO_API_KEY that cannot go in a header is refused in one line, and keyCommand supplies the key', async () => {
-  for (const bad of ['K\r', '   ', 'K K']) {
+  for (const bad of ['K\r', 'K\n', '   ', 'K K']) {
     const said = await stderrOf(() =>
       withServer(withKeyCommand(['sh', '-c', 'echo K']), bad, async (call) => {
         expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
@@ -829,7 +831,10 @@ test('the key read through keyCommand is not handed to the dispatched command', 
     await call('POST', `/api/nodes/n1/tasks`, { url: 'http://k/dashboard/workspace/W1/project/p1/task/t9' });
     const { status, json } = await call('POST', '/api/nodes/n1/tasks/t9/dispatch', { repo: 'o/r' });
     expect(status).toBe(200);
-    expect(json.output).toContain('key=[]');
+    // Not `key=[]`: the child gets the env eda started with (Bun.spawn without `env` ignores later
+    // process.env writes), which may hold the runner's own key. What must not be there is keyCommand's.
+    expect(json.output).toContain('key=[');
+    expect(json.output).not.toContain('key=[K]');
   });
 });
 

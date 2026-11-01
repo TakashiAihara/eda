@@ -34,7 +34,7 @@ export type ServeOptions = { dir: string; host: string; port: number; title?: st
 
 type Handler = (req: Request, doc: MapDoc, params: Record<string, string>) => unknown | Promise<unknown>;
 
-/** No whitespace or control characters: a `\r` would pass a newline check and then make every request fail on the Authorization header. */
+/** Printable ASCII only, no whitespace or control characters: a `\r` would pass a newline check and then make every request fail on the Authorization header. */
 const isHeaderKey = (key: string): boolean => /^[\x21-\x7e]+$/.test(key);
 
 /**
@@ -72,13 +72,15 @@ export function startServer(opts: ServeOptions) {
   // Starts from the clock so a browser left open across a restart sees a new value.
   let rev = Date.now();
   const cfg = config();
-  // An empty host is no host, as an empty EDA_KANEO_HOST is: `/api` alone is nowhere to send a key.
-  const kaneoHost = cfg.kaneo?.host || null;
+  // A host that is blank or not a string is no host: `/api` alone is nowhere to send a key.
+  const rawHost: unknown = cfg.kaneo?.host;
+  const kaneoHost = typeof rawHost === 'string' && rawHost.trim() !== '' ? rawHost : null;
   const kaneoWorkspace = cfg.kaneo?.workspace ?? '';
   // Read once, at start: a key that appeared later would switch the buttons on under a browser
   // that had drawn them away, and one that goes must not be used half-way through the map's life.
   // An empty KANEO_API_KEY counts as unset; one that cannot go in a header (a pasted `\r`, spaces)
-  // is refused the same way the command's key is, rather than switching on features that all fail.
+  // is refused by the check the command's key gets once its line end is cut, rather than switching
+  // on features that all fail. Not trimmed: an env value is what the person set, taken literally.
   const envKey = process.env['KANEO_API_KEY'] ?? '';
   const envKeyOk = isHeaderKey(envKey);
   if (kaneoHost !== null && envKey !== '' && !envKeyOk) console.error('eda: KANEO_API_KEY is not a single run of printable ASCII; it is ignored');
