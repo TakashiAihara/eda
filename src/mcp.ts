@@ -159,7 +159,7 @@ export const TOOLS = [
   {
     name: 'suggest_edit',
     description:
-      'Suggest a change to ONE existing node: new text and/or URLs to attach. Same rules as suggest_node — it waits for the person.',
+      'Suggest a change to ONE existing node: new text and/or URLs to attach. Same rules as suggest_node — it waits for the person. A node takes one waiting change at a time, from any session: a second is refused until the person adopts or rejects the first.',
     inputSchema: {
       type: 'object',
       properties: {

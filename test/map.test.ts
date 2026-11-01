@@ -322,3 +322,31 @@ test('an unknown marker is refused, and the AI reads the markers', () => {
   setMarker(d, n.id, 'question', true);
   expect(toOutlineForAi(d)).toContain(`[${n.id}] hotel  (markers: question)`);
 });
+
+test('a node takes one waiting edit, whoever suggests it, until the person decides', () => {
+  const d = newMap('p');
+  const n = addChild(d, 'n1', 'a');
+  const other = addChild(d, 'n1', 'b');
+  const another = { by: 'ai', session: 'S-other', model: 'm' } as const;
+  suggest(d, { kind: 'edit', nodeId: other.id, text: 'b2', reason: '' }, ai);
+  const first = suggest(d, { kind: 'edit', nodeId: n.id, text: 'a2', reason: '' }, ai);
+  suggest(d, { kind: 'add', parentId: n.id, text: 'child', reason: '' }, another);
+  const before = JSON.stringify(d);
+
+  let refused: unknown;
+  try {
+    suggest(d, { kind: 'edit', nodeId: n.id, urls: ['https://x.example/'], reason: '' }, another);
+  } catch (e) {
+    refused = e;
+  }
+  expect((refused as Error).message).toBe(`${first.id} already suggests a change to ${n.id} and is waiting for the person`);
+  expect((refused as { status: number }).status).toBe(409);
+  expect(JSON.stringify(d)).toBe(before);
+
+  reject(d, first.id);
+  const second = suggest(d, { kind: 'edit', nodeId: n.id, text: 'a3', reason: '' }, another);
+  expect(() => suggest(d, { kind: 'edit', nodeId: n.id, text: 'a4', reason: '' }, another)).toThrow(`${second.id} already suggests`);
+  accept(d, second.id);
+  expect(n.text).toBe('a3');
+  expect(suggest(d, { kind: 'edit', nodeId: n.id, text: 'a5', reason: '' }, another).kind).toBe('edit');
+});
