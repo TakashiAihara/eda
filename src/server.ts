@@ -34,6 +34,9 @@ export type ServeOptions = { dir: string; host: string; port: number; title?: st
 
 type Handler = (req: Request, doc: MapDoc, params: Record<string, string>) => unknown | Promise<unknown>;
 
+/** No whitespace or control characters: a `\r` would pass a newline check and then make every request fail on the Authorization header. */
+const isHeaderKey = (key: string): boolean => /^[\x21-\x7e]+$/.test(key);
+
 /**
  * The key printed by `kaneo.keyCommand`, so a session can start `eda serve` without wrapping it in
  * a secret runner. An argv with no shell, run once with a ceiling. Any failure is '' (the features
@@ -54,9 +57,7 @@ function keyFromCommand(raw: unknown, ceilingMs: number): string {
     // maxBuffer: a key is a line, so a command that floods stdout is cut off rather than held in memory.
     const r = Bun.spawnSync(raw as string[], { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', timeout: ceilingMs, killSignal: 'SIGKILL', maxBuffer: 4096 });
     const key = r.stdout.toString().trim();
-    // No whitespace or control characters: a `\r` would pass a newline check and then make every
-    // request fail on the Authorization header.
-    if (r.exitCode === 0 && /^[\x21-\x7e]+$/.test(key)) return key;
+    if (r.exitCode === 0 && isHeaderKey(key)) return key;
     const why = r.exitedDueToTimeout ? `timed out after ${ceilingMs} ms` : r.exitedDueToMaxBuffer ? 'printed more than 4096 bytes' : r.exitCode === 0 ? 'printed no single-line key' : `exited ${r.exitCode ?? `on ${r.signalCode}`}`;
     console.error(`eda: kaneo.keyCommand ${why}; the kaneo features are off`);
   } catch (err) {
@@ -71,12 +72,17 @@ export function startServer(opts: ServeOptions) {
   // Starts from the clock so a browser left open across a restart sees a new value.
   let rev = Date.now();
   const cfg = config();
-  const kaneoHost = cfg.kaneo?.host ?? null;
+  // An empty host is no host, as an empty EDA_KANEO_HOST is: `/api` alone is nowhere to send a key.
+  const kaneoHost = cfg.kaneo?.host || null;
   const kaneoWorkspace = cfg.kaneo?.workspace ?? '';
   // Read once, at start: a key that appeared later would switch the buttons on under a browser
   // that had drawn them away, and one that goes must not be used half-way through the map's life.
-  // An empty KANEO_API_KEY counts as unset, as an empty EDA_KANEO_HOST does.
-  const kaneoKey = process.env['KANEO_API_KEY'] || (kaneoHost === null ? '' : keyFromCommand(cfg.kaneo?.keyCommand, opts.keyCommandMs ?? 15_000));
+  // An empty KANEO_API_KEY counts as unset; one that cannot go in a header (a pasted `\r`, spaces)
+  // is refused the same way the command's key is, rather than switching on features that all fail.
+  const envKey = process.env['KANEO_API_KEY'] ?? '';
+  const envKeyOk = isHeaderKey(envKey);
+  if (kaneoHost !== null && envKey !== '' && !envKeyOk) console.error('eda: KANEO_API_KEY is not a single run of printable ASCII; it is ignored');
+  const kaneoKey = kaneoHost === null ? '' : envKeyOk ? envKey : keyFromCommand(cfg.kaneo?.keyCommand, opts.keyCommandMs ?? 15_000);
   // A string where an argv belongs is a config mistake: taken as one it would hand the whole
   // command line to spawn as a single argument. Dispatch is off instead, and says so here —
   // at start, where the person can still see it, rather than as a 500 at the click.

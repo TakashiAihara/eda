@@ -785,6 +785,83 @@ test('with no kaneo host, keyCommand is not run', async () => {
   expect(existsSync(ran)).toBe(false);
 });
 
+test('an empty kaneo.host is no host: keyCommand is not run and every kaneo feature is off', async () => {
+  const ran = join(home, 'keycommand-empty-host');
+  const cfg = { kaneo: { host: '', workspace: 'W1', keyCommand: ['sh', '-c', `touch ${ran}; echo K`] }, spawn: { command: command() } };
+  await withServer(cfg, null, async (call) => {
+    expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: null, status: false, createTask: false, dispatch: false });
+  });
+  expect(existsSync(ran)).toBe(false);
+  await withServer(cfg, 'K', async (call) => {
+    expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: null, status: false, createTask: false, dispatch: false });
+  });
+});
+
+test('a KANEO_API_KEY that cannot go in a header is refused in one line, and keyCommand supplies the key', async () => {
+  for (const bad of ['K\r', '   ', 'K K']) {
+    const said = await stderrOf(() =>
+      withServer(withKeyCommand(['sh', '-c', 'echo K']), bad, async (call) => {
+        expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
+      }),
+    );
+    expect(said).toEqual(['eda: KANEO_API_KEY is not a single run of printable ASCII; it is ignored']);
+  }
+});
+
+test('a refused KANEO_API_KEY with no keyCommand leaves the features off', async () => {
+  const said = await stderrOf(() =>
+    withServer(config(command()), 'K\r', async (call) => {
+      expect(((await call('GET', '/api/state')).json as any).kaneo).toEqual({ host: kaneoUrl, status: false, createTask: false, dispatch: false });
+    }),
+  );
+  expect(said).toEqual(['eda: KANEO_API_KEY is not a single run of printable ASCII; it is ignored']);
+});
+
+test('with no kaneo host, a KANEO_API_KEY that cannot go in a header is not complained about', async () => {
+  const said = await stderrOf(() => withServer({}, 'K\r', async () => {}));
+  expect(said).toEqual([]);
+});
+
+test('the key read through keyCommand is not handed to the dispatched command', async () => {
+  tasks.set('t9', { id: 't9', number: 49, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
+  const cfg = { kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand: ['sh', '-c', 'echo K'] }, spawn: { command: ['sh', '-c', 'echo "key=[$KANEO_API_KEY]"'] } };
+  await withServer(cfg, null, async (call) => {
+    await call('POST', `/api/nodes/n1/tasks`, { url: 'http://k/dashboard/workspace/W1/project/p1/task/t9' });
+    const { status, json } = await call('POST', '/api/nodes/n1/tasks/t9/dispatch', { repo: 'o/r' });
+    expect(status).toBe(200);
+    expect(json.output).toContain('key=[]');
+  });
+});
+
+test("keyCommand's own stderr never reaches eda serve's stderr", async () => {
+  const cfgHome = temp('eda-keycmd-cfg-');
+  mkdirSync(join(cfgHome, 'eda'), { recursive: true });
+  writeFileSync(join(cfgHome, 'eda', 'config.json'), JSON.stringify({ kaneo: { host: kaneoUrl, keyCommand: ['sh', '-c', 'echo eda-marker-on-stderr >&2; echo K'] } }));
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), XDG_CONFIG_HOME: cfgHome, EDA_HOME: temp('eda-keycmd-home-') };
+  delete env['KANEO_API_KEY'];
+  delete env['CLAUDE_CODE_SESSION_ID'];
+  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', 'src', 'cli.ts'), 'serve', temp('eda-keycmd-map-'), '--host', '127.0.0.1'], { env, stdout: 'pipe', stderr: 'pipe' });
+  const errText = new Response(proc.stderr).text();
+  try {
+    const reader = proc.stdout.getReader();
+    let out = '';
+    while (!out.includes('\n')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += new TextDecoder().decode(value);
+    }
+    const { url } = JSON.parse(out.split('\n')[0]!) as { url: string };
+    const u = new URL(url);
+    const res = await fetch(`http://127.0.0.1:${u.port}/api/state`, { headers: { authorization: `Bearer ${u.hash.slice('#t='.length)}` } });
+    // The command did run and its key was taken, so what it wrote to stderr was really there to leak.
+    expect(((await res.json()) as any).kaneo.status).toBe(true);
+  } finally {
+    proc.kill();
+  }
+  await proc.exited;
+  expect(await errText).not.toContain('eda-marker-on-stderr');
+});
+
 test('mcp.ts offers no tool for the kaneo routes', async () => {
   const { readFileSync: read } = await import('node:fs');
   const mcp = read(join(import.meta.dir, '..', 'src', 'mcp.ts'), 'utf8');
