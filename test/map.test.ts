@@ -348,5 +348,6 @@ test('a node takes one waiting edit, whoever suggests it, until the person decid
   expect(() => suggest(d, { kind: 'edit', nodeId: n.id, text: 'a4', reason: '' }, another)).toThrow(`${second.id} already suggests`);
   accept(d, second.id);
   expect(n.text).toBe('a3');
-  expect(suggest(d, { kind: 'edit', nodeId: n.id, text: 'a5', reason: '' }, another).kind).toBe('edit');
+  const third = suggest(d, { kind: 'edit', nodeId: n.id, text: 'a5', reason: '' }, another);
+  expect(d.suggestions.map((x) => x.id)).toContain(third.id);
 });
