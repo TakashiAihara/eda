@@ -393,6 +393,17 @@ function addOutline(doc: MapDoc, parent: Node, o: Outline): void {
   for (const c of o.children) addOutline(doc, n, c);
 }
 
+/** A new map holding an outline read from elsewhere (an .xmind file); every node is the person's. */
+export function mapFromOutline(o: Outline): MapDoc {
+  const doc = newMap(o.text);
+  const add = (parent: Node, c: Outline): void => {
+    const n = addChild(doc, parent.id, c.text);
+    for (const g of c.children) add(n, g);
+  };
+  for (const c of o.children) add(doc.root, c);
+  return doc;
+}
+
 export function reject(doc: MapDoc, id: string): void {
   const s = takeSuggestion(doc, id);
   decided(doc, s, `却下: 「${s.text ?? s.urls.join(' ')}」`, s.kind === 'add' ? s.parentId : s.nodeId);
