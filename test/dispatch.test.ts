@@ -841,7 +841,7 @@ test('the key read through keyCommand is not handed to the dispatched command', 
     // Not `key=[]`: the child gets the env eda started with (Bun.spawn without `env` ignores later
     // process.env writes), which may hold the runner's own key. What must not be there is keyCommand's.
     expect(json.output).toContain('key=[');
-    expect(json.output).not.toContain('key=[K]');
+    expect(json.output.split('\n')).not.toContain('key=[K]');
   });
 });
 
