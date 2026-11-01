@@ -28,7 +28,7 @@ import {
   taskDescription,
   toOutlineForAi,
 } from './map.ts';
-import { aiToken, config, openMap, saveMap, token } from './store.ts';
+import { aiToken, config, loadMap, openMap, saveMap, token } from './store.ts';
 
 export type ServeOptions = { dir: string; host: string; port: number; title?: string; session?: string; cwd?: string; kaneoPollMs?: number; keyCommandMs?: number };
 
@@ -144,7 +144,20 @@ export function startServer(opts: ServeOptions) {
         if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), decodeURIComponent(req.headers.get('x-eda-cwd') ?? ''));
         const result = await h(req, doc, req.params ?? {});
         if (write) {
-          saveMap(opts.dir, doc);
+          try {
+            saveMap(opts.dir, doc);
+          } catch (err) {
+            // The change is in memory but not on disk: put the map back to what eda.json holds,
+            // the last save that landed (other requests' included), so the page and the next
+            // save do not carry a change the person was told failed.
+            const saved = loadMap(opts.dir);
+            if (saved) {
+              for (const k of Object.keys(doc)) delete (doc as Record<string, unknown>)[k];
+              Object.assign(doc, saved);
+            }
+            rev += 1;
+            throw err;
+          }
           rev += 1;
         }
         // A route with its own status to report (a command's exit code) hands the Response back.

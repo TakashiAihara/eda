@@ -7,7 +7,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { MapError, type MapDoc, newMap, toMarkdown } from './map.ts';
@@ -43,17 +43,24 @@ function landing(path: string): { target: string; mode?: number } {
  * A path that is a symlink is replaced, not followed: only a map's own files go through `landing`.
  */
 function writeAtomic(path: string, body: string, mode?: number): void {
-  // A dot name, so tools that skip dotfiles (Obsidian, Markmap) do not pick the half-written file up.
-  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  // A dot name, so a tool that skips dotfiles (Obsidian) does not pick the half-written file up.
+  // Random and created exclusively, so nothing planted at the name is written through.
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
   try {
-    writeFileSync(tmp, body, mode === undefined ? undefined : { mode });
+    writeFileSync(tmp, body, { flag: 'wx', ...(mode === undefined ? {} : { mode }) });
     // writeFileSync's mode is cut by the umask; set it whole.
     if (mode !== undefined) chmodSync(tmp, mode);
     renameSync(tmp, path);
   } catch (err) {
-    // Not reached by the tests (a failing write or rename needs a full or broken disk); a temp
-    // file left by one would sit in the person's directory.
-    rmSync(tmp, { force: true });
+    // The temp file this call made, cut short or not renamed. Not reached by the tests: it needs a
+    // write or a rename that fails, which a full or read-only disk gives and a test host does not.
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* never made */
+      }
+    }
     throw err;
   }
 }
@@ -73,10 +80,12 @@ export function loadMap(dir: string): MapDoc | undefined {
 
 export function saveMap(dir: string, doc: MapDoc): void {
   // Both checked before either is written: a refused map.md must not leave the change in eda.json.
+  // The export first and the source of truth last, so a write that fails anyway (a full or
+  // read-only disk) leaves eda.json as it was; the next start writes map.md from it again.
   const json = landing(join(dir, JSON_FILE));
   const md = landing(join(dir, MD_FILE));
-  writeAtomic(json.target, `${JSON.stringify(doc, null, 2)}\n`, json.mode);
   writeAtomic(md.target, toMarkdown(doc.root), md.mode);
+  writeAtomic(json.target, `${JSON.stringify(doc, null, 2)}\n`, json.mode);
 }
 
 export function openMap(dir: string, title?: string): MapDoc {

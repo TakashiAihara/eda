@@ -191,6 +191,13 @@ test('a save refused for map.md leaves eda.json as it was', async () => {
     expect(r.status).toBe(400);
     expect(((await r.json()) as { error: string }).error).toBe(`${join(d, 'map.md')} is a symlink to nothing; mount or fix what it points at, or remove the link`);
     expect(readFileSync(join(d, 'eda.json'), 'utf8')).toBe(json);
+    // Nor kept in memory: the page and the next save see the map as eda.json has it.
+    const state = (await (await fetch(`http://127.0.0.1:${s.server.port}/api/state`, { headers: { authorization: `Bearer ${token()}` } })).json()) as { doc: { root: { children: unknown[] } } };
+    expect(state.doc.root.children).toEqual([]);
+    rmSync(join(d, 'map.md'));
+    const ok = await fetch(`http://127.0.0.1:${s.server.port}/api/chat`, { method: 'POST', headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'saved now' }) });
+    expect(ok.status).toBe(200);
+    expect(loadMap(d)!.root.children).toEqual([]);
   } finally {
     s.stop();
   }
