@@ -19,12 +19,15 @@ export type SessionProcess = { pid: number; start: string };
 const sessionsDir = (): string => join(process.env['CLAUDE_CONFIG_DIR'] || join(homedir(), '.claude'), 'sessions');
 
 /**
- * A running process's start time, read the way Claude Code reads it for `procStart`: field 22 of
+ * A process's start time, read the way Claude Code reads it for `procStart`: field 22 of
  * /proc/<pid>/stat (counted after the parenthesised command name, which may hold spaces), or
- * `ps -o lstart=` in the C locale and UTC where there is no /proc (macOS). Undefined for an
- * ended process, and for a zombie, which has ended but keeps its /proc entry until reaped.
+ * `ps -o lstart=` in the C locale and UTC where there is no /proc (macOS).
+ *
+ * `undefined`: not running, which includes a zombie (ended, its /proc entry kept until reaped).
+ * `null`: running, but `ps` could not say when it started; read as a match, as Claude Code reads
+ * it, so one slow `ps` does not stop a map whose session is still there.
  */
-function startOf(pid: number): string | undefined {
+function startOf(pid: number): string | null | undefined {
   if (existsSync('/proc/self/stat')) {
     try {
       const fields = readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -36,16 +39,24 @@ function startOf(pid: number): string | undefined {
   }
   if (!alive(pid)) return undefined;
   try {
-    const r = Bun.spawnSync(['ps', '-o', 'lstart=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' }, stdout: 'pipe', stderr: 'ignore', timeout: 1000 });
+    const r = Bun.spawnSync(['ps', '-o', 'lstart=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' }, stdout: 'pipe', stderr: 'ignore', timeout: 1000, killSignal: 'SIGKILL' });
     const out = r.exitCode === 0 ? r.stdout.toString().trim() : '';
-    return out === '' ? undefined : out;
+    return out === '' ? null : out;
   } catch {
-    return undefined;
+    return null;
   }
 }
 
+/** Whether `p` is still running as the process it was found to be. */
+function same(p: SessionProcess): boolean {
+  const start = startOf(p.pid);
+  return start !== undefined && (start === null || start === p.start);
+}
 
-/** The live process Claude Code recorded for `session`, if any. */
+/**
+ * The live process Claude Code recorded for `session`, if any. A record without a start time is
+ * not taken: its pid could be anyone's by now, and Claude Code writes one.
+ */
 export function findSession(session: string): SessionProcess | undefined {
   let names: string[];
   try {
@@ -61,12 +72,9 @@ export function findSession(session: string): SessionProcess | undefined {
     if (pid <= 1) continue;
     try {
       const j = JSON.parse(readFileSync(join(sessionsDir(), n), 'utf8')) as { pid?: unknown; sessionId?: unknown; procStart?: unknown };
-      if (j.sessionId !== session || j.pid !== pid) continue;
-      // A record without a start time is held to the one seen now, so a later reuse of the pid is told apart.
-      const start = startOf(pid);
-      if (start === undefined) continue;
-      if (typeof j.procStart === 'string' && j.procStart !== start) continue;
-      return { pid, start };
+      if (j.sessionId !== session || j.pid !== pid || typeof j.procStart !== 'string') continue;
+      const p = { pid, start: j.procStart };
+      if (same(p)) return p;
     } catch {
       /* a file mid-write; the next look decides */
     }
@@ -75,13 +83,21 @@ export function findSession(session: string): SessionProcess | undefined {
 }
 
 /**
- * Call `gone` once, when no process runs `session` any more. The records are read again on every
- * look (8.5 ms for 931 of them, measured), so a session resumed under another pid while the map is
- * up keeps it up. Returns the stop.
+ * Call `gone` once, when no process runs `session` any more. The process found first is followed
+ * by its pid and start time, not by the record's `sessionId`, which Claude Code rewrites in place
+ * when the same process switches conversation (`/clear`): the map ends with the process. When it
+ * ends, the records are read again, so a session resumed under another pid while the map is up
+ * keeps it up. Returns the stop.
  */
-export function watchSession(session: string, gone: () => void, pollMs: number): () => void {
+export function watchSession(session: string, first: SessionProcess, gone: () => void, pollMs: number): () => void {
+  let current = first;
   const timer = setInterval(() => {
-    if (findSession(session) !== undefined) return;
+    if (same(current)) return;
+    const next = findSession(session);
+    if (next !== undefined) {
+      current = next;
+      return;
+    }
     clearInterval(timer);
     gone();
   }, pollMs);

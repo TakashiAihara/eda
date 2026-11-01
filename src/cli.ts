@@ -89,9 +89,10 @@ async function main(argv: string[]): Promise<number> {
       // or was detached from it. One started outside a session, or whose process cannot be found,
       // stays up as before.
       if (session !== undefined) {
-        if (findSession(session) === undefined) console.error(`eda: no running Claude Code process found for session ${session}; the map stays up after the session ends`);
+        const proc = findSession(session);
+        if (proc === undefined) console.error(`eda: no running Claude Code process found for session ${session}; the map stays up after the session ends`);
         else
-          watchSession(session, () => {
+          watchSession(session, proc, () => {
             console.error(`eda: session ${session} ended; stopping the map`);
             stop();
           }, SESSION_POLL_MS);

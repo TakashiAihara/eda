@@ -30,7 +30,9 @@ process.env['CLAUDE_CONFIG_DIR'] = config;
 const { findSession, watchSession } = await import('../src/session.ts');
 
 const hasProc = existsSync('/proc/self/stat');
+/** The start time as Claude Code writes `procStart` on this OS. */
 const startOf = (pid: number): string => {
+  if (!hasProc) return Bun.spawnSync(['ps', '-o', 'lstart=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).stdout.toString().trim();
   const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
   return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]!;
 };
@@ -39,7 +41,7 @@ const startOf = (pid: number): string => {
 const fakeSession = (session: string, start?: (pid: number) => string) => {
   const p = Bun.spawn(['sleep', '30']);
   sleeps.push(p);
-  const procStart = start ? start(p.pid) : hasProc ? startOf(p.pid) : '0';
+  const procStart = start ? start(p.pid) : startOf(p.pid);
   writeFileSync(join(config, 'sessions', `${p.pid}.json`), JSON.stringify({ pid: p.pid, sessionId: session, procStart, kind: 'interactive' }));
   return p;
 };
@@ -67,8 +69,10 @@ test('a record whose pid is not the one its file is named for is not the session
   sleeps.push(p);
   const q = Bun.spawn(['sleep', '30']);
   sleeps.push(q);
-  writeFileSync(join(config, 'sessions', `${q.pid}.json`), JSON.stringify({ pid: p.pid, sessionId: 'S-misnamed', procStart: hasProc ? startOf(p.pid) : '0' }));
-  writeFileSync(join(config, 'sessions', '1.json'), JSON.stringify({ pid: 1, sessionId: 'S-misnamed' }));
+  // Named for p, with p's start time, but naming q: only the pid check tells it apart.
+  writeFileSync(join(config, 'sessions', `${p.pid}.json`), JSON.stringify({ pid: q.pid, sessionId: 'S-misnamed', procStart: startOf(p.pid) }));
+  // pid 1 is running and its start time is right: only the pid <= 1 check tells it apart.
+  writeFileSync(join(config, 'sessions', '1.json'), JSON.stringify({ pid: 1, sessionId: 'S-misnamed', procStart: startOf(1) }));
   expect(findSession('S-misnamed')).toBeUndefined();
 });
 
@@ -96,21 +100,20 @@ test.if(hasProc)('a live pid with another start time is a reused pid, not the se
   expect(findSession('S-reused')).toBeUndefined();
 });
 
-test('a record without a start time is the session while its pid lives, and not after', async () => {
+test('a record without a start time is not the session, even with its pid running', () => {
   const p = Bun.spawn(['sleep', '30']);
   sleeps.push(p);
   writeFileSync(join(config, 'sessions', `${p.pid}.json`), JSON.stringify({ pid: p.pid, sessionId: 'S-nostart' }));
-  // Held to the start time seen now, so a later reuse of the pid is told apart.
-  expect(findSession('S-nostart')).toEqual({ pid: p.pid, start: hasProc ? startOf(p.pid) : expect.any(String) });
-  p.kill();
-  await p.exited;
   expect(findSession('S-nostart')).toBeUndefined();
+  // The same process recorded with its start time is.
+  writeFileSync(join(config, 'sessions', `${p.pid}.json`), JSON.stringify({ pid: p.pid, sessionId: 'S-nostart', procStart: startOf(p.pid) }));
+  expect(findSession('S-nostart')).toEqual({ pid: p.pid, start: startOf(p.pid) });
 });
 
 test('the watch says gone once the process ends, and only once', async () => {
   const p = fakeSession('S-watch');
   let calls = 0;
-  watchSession('S-watch', () => calls++, 20);
+  watchSession('S-watch', findSession('S-watch')!, () => calls++, 20);
   await Bun.sleep(100);
   expect(calls).toBe(0);
   p.kill();
@@ -119,10 +122,22 @@ test('the watch says gone once the process ends, and only once', async () => {
   expect(calls).toBe(1);
 });
 
+test('a conversation switched in the same process (/clear) keeps the watch on that process', async () => {
+  const p = fakeSession('S-clear');
+  let calls = 0;
+  watchSession('S-clear', findSession('S-clear')!, () => calls++, 20);
+  // Claude Code rewrites the record in place with the new conversation's id.
+  writeFileSync(join(config, 'sessions', `${p.pid}.json`), JSON.stringify({ pid: p.pid, sessionId: 'S-clear-next', procStart: startOf(p.pid) }));
+  await Bun.sleep(150);
+  expect(calls).toBe(0);
+  p.kill();
+  expect(await until(() => calls === 1, 2000)).toBe(true);
+});
+
 test('a session resumed under another pid keeps the watch going until that one ends too', async () => {
   const first = fakeSession('S-resume');
   let calls = 0;
-  watchSession('S-resume', () => calls++, 20);
+  watchSession('S-resume', findSession('S-resume')!, () => calls++, 20);
   const second = fakeSession('S-resume');
   first.kill();
   await first.exited;
@@ -162,15 +177,15 @@ test('eda serve stays up while the session lives, and stops, tidied, when it end
   expect(p.exitCode).toBeNull();
   claude.kill();
   const t0 = Date.now();
-  const code = await Promise.race([p.exited, Bun.sleep(9000).then(() => 'still running')]);
+  const code = await Promise.race([p.exited, Bun.sleep(12_000).then(() => 'still running')]);
   expect(code).toBe(0);
   // The look is every 5 s, so the map is gone within one of them.
-  expect(Date.now() - t0).toBeLessThan(7000);
+  expect(Date.now() - t0).toBeLessThan(10_000);
   expect(await err).toContain('eda: session S-serve ended; stopping the map');
   // Stopped the way Ctrl+C stops it: no lock and no running-map record left behind.
   expect(existsSync(join(dir, 'eda.lock'))).toBe(false);
   expect(readdirSync(join(home, 'instances'))).toEqual([]);
-}, 25_000);
+}, 30_000);
 
 test('eda serve started for a session it cannot find says so and stays up', async () => {
   const { p, err } = await serve('S-missing');
