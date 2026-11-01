@@ -483,6 +483,68 @@ test('Alt+1 draws only the first level, Alt+0 draws them all, and the saved map 
   expect(await page.locator('header button.levels').count()).toBe(0);
   expect(shape(await map())).toEqual(unfolded);
 }, 20_000);
+test('the zoom buttons zoom out, in and back, and leave the map its keys', async () => {
+  const { page, add, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  await open();
+
+  await page.locator(`.node[data-id="${stay.id}"]`).click();
+  await page.locator('header [data-key="zoom-in"]').click();
+  await page.locator('header [data-key="zoom-in"]').click();
+  expect(await zoomOf(page)).toBe('1.2');
+  expect(await page.locator('header .zoom').textContent()).toBe('120%');
+  await page.locator('header [data-key="zoom-out"]').click();
+  expect(await zoomOf(page)).toBe('1.1');
+  expect(await page.locator('header .zoom').textContent()).toBe('110%');
+  await page.locator('header [data-key="zoom-reset"]').click();
+  expect(await zoomOf(page)).toBe('1');
+  expect(await page.locator('header .zoom').textContent()).toBe('100%');
+
+  // A click on a zoom button does not take the keys away from the selected node.
+  await page.keyboard.press('f');
+  await marked(map, 'stay', ['flag']);
+}, 20_000);
+
+test('the +N at a level limit shows every level again and saves no fold', async () => {
+  const { page, add, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  await add(stay.id, 'hotel');
+  await add(trip.id, 'fly');
+  await open();
+
+  await page.locator(`.node[data-id="${trip.id}"]`).click();
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  const cut = page.locator(`.node[data-id="${stay.id}"]`).locator('xpath=..').locator('button.fold');
+  expect(await cut.textContent()).toBe('+1');
+  await cut.click();
+  await drawn(page, ['trip', 'stay', 'hotel', 'fly']);
+  expect(await page.locator('header button.levels').count()).toBe(0);
+  expect(shape(await map())).toEqual({ text: 'trip', children: [{ text: 'stay', children: [{ text: 'hotel', children: [] }] }, { text: 'fly', children: [] }] });
+}, 20_000);
+
+test('a folded node at the level limit opens with a click and its children are drawn, not only unfolded on the server', async () => {
+  const { page, call, add, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  await add(stay.id, 'hotel');
+  await add(trip.id, 'fly');
+  await call('PATCH', `/api/nodes/${stay.id}`, { collapsed: true });
+  await open();
+
+  await page.locator(`.node[data-id="${trip.id}"]`).click();
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  const fold = page.locator(`.node[data-id="${stay.id}"]`).locator('xpath=..').locator('button.fold');
+  expect(await fold.textContent()).toBe('+1');
+  await fold.click();
+  // Unfolded on the server and drawn on the page: opening it has to reach past the limit too.
+  await until('stay unfolded on the server', async () => child(await map(), 'stay').collapsed !== true);
+  await drawn(page, ['trip', 'stay', 'hotel', 'fly']);
+}, 20_000);
+
 test('when kaneo refuses the project list, the node panel says why and offers another try', async () => {
   // A kaneo that refuses with its own reason; the panel should show that reason, not a bare failure.
   const kaneo = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => Response.json({ message: 'key revoked' }, { status: 401 }) });
