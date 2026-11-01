@@ -231,8 +231,9 @@ test('the two tokens are different and each opens only its own routes', async ()
 });
 
 test('a map that does not take the session token is named, not reported as no map at all', async () => {
-  const hint = 'An eda serve started before the AI got its own token, or under another EDA_HOME, does that: restart it.';
-  // As an eda serve from before the split answers: no /api/ai/rev at all, Bun's plain 404.
+  const hint = 'An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.';
+  // As an eda serve from before the split answers /api/ai/rev: no such route, Bun's plain 404.
+  // (Its /api/ai/map, suggest and reply exist and answer 401, as the wrong-token client below gets.)
   const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('not found', { status: 404 }) });
   // Nothing listening: a map that went down, which is not the same answer.
   const down = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('') });
@@ -243,10 +244,10 @@ test('a map that does not take the session token is named, not reported as no ma
     // A token this server does not know: its 401.
     const wrong = new Client('S1', '/w', () => [at(dir, server.port!)], () => 'stale-token');
     await expect(runTool(wrong, 'read_map', {})).rejects.toThrow(`no running map for this session; these do not take its calls: ${dir}. ${hint}`);
-    await expect(runTool(wrong, 'read_map', { map: dir })).rejects.toThrow(`http://127.0.0.1:${server.port} does not take this session's calls. ${hint}`);
+    await expect(runTool(wrong, 'read_map', { map: dir })).rejects.toThrow(`the map at ${dir} does not take this session's calls. ${hint}`);
     const pre = new Client('S1', '/w', () => [at('/old-map', old.port!), at('/down-map', downPort)]);
     await expect(runTool(pre, 'read_map', {})).rejects.toThrow(`no running map for this session; these do not take its calls: /old-map. ${hint}`);
-    // What one look found is not carried into the next: a map named that is not running is just that.
+    // A map named that is not running is just that, whatever the look before found.
     await expect(runTool(wrong, 'read_map', { map: '/nowhere' })).rejects.toThrow(/^no running map at \/nowhere$/);
     // A map that is just not this session's, or down, is still the plain answer.
     await expect(runTool(new Client('S-nobody', '/w', () => [at(dir, server.port!), at('/down-map', downPort)]), 'read_map', {})).rejects.toThrow(/^no running map for this session\. Start one/);

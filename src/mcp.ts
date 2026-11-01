@@ -33,12 +33,12 @@ export function localBase(host: string, port: unknown): string | undefined {
   return own.includes(host) ? `http://${host.includes(':') ? `[${host}]` : host}:${port}` : undefined;
 }
 
-const STALE_HINT = 'An eda serve started before the AI got its own token, or under another EDA_HOME, does that: restart it.';
+const STALE_HINT = 'An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.';
 
 /** A running eda serve that turns this session's calls down: see `Client.call`. */
 class StaleServer extends Error {
-  constructor(base: string) {
-    super(`${base} does not take this session's calls. ${STALE_HINT}`);
+  constructor(dir: string) {
+    super(`the map at ${dir} does not take this session's calls. ${STALE_HINT}`);
   }
 }
 
@@ -68,7 +68,7 @@ export class Client {
     // A 401, or a 404 that is not eda's own JSON answer (the route is not there at all): an
     // eda serve that does not take this session's calls, as one from before the AI got its
     // own token (#2) does. Told apart from a map that is simply down.
-    if (res.status === 401 || (res.status === 404 && parsed === undefined)) throw new StaleServer(t.base);
+    if (res.status === 401 || (res.status === 404 && parsed === undefined)) throw new StaleServer(t.dir);
     const json = parsed ?? { error: `${res.status} from ${t.base}${path}` };
     if (!res.ok) throw new Error(String(json['error'] ?? res.statusText));
     return json;
