@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,6 +21,7 @@ process.env['XDG_CONFIG_HOME'] = home;
 const { startServer } = await import('../src/server.ts');
 const { Client, describe: describeChat, runTool, undelivered } = await import('../src/mcp.ts');
 const { loadMap, token } = await import('../src/store.ts');
+const { toMarkdown } = await import('../src/map.ts');
 
 const dir = temp('eda-map-');
 const { server, stop } = startServer({ dir, host: '127.0.0.1', port: 0, title: 'trip', session: 'S1', cwd: '/w' });
@@ -75,12 +76,46 @@ test('the session that started the map is recorded for resume', async () => {
   expect(json.doc.sessions.map((s: any) => s.id)).toEqual(['S1']);
 });
 
-test('a hand edit of map.md is not applied: it comes back as candidates and the file is restored', async () => {
-  writeFileSync(join(dir, 'map.md'), '# trip\n\n- hotel\n- flights\n');
-  const { json } = await person('GET', '/api/state');
-  expect(json.doc.root.children.map((c: any) => c.text)).toEqual(['hotel']);
-  expect(json.doc.suggestions.map((s: any) => [s.source.by, s.text])).toEqual([['md-edit', 'flights']]);
-  expect(readFileSync(join(dir, 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n');
+test('a hand edit of map.md is not read: the map and the candidate list stay, and the next save exports over it', async () => {
+  const d = temp('eda-md-');
+  const { server: s, stop: stopIt } = startServer({ dir: d, host: '127.0.0.1', port: 0, title: 'trip' });
+  try {
+    const call = async (method: string, path: string, body?: unknown) =>
+      (await fetch(`http://127.0.0.1:${s.port}${path}`, { method, headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })).json() as Promise<any>;
+    await call('POST', '/api/nodes', { parentId: 'n1', text: 'hotel' });
+    const before = (await call('GET', '/api/state')).doc;
+    writeFileSync(join(d, 'map.md'), '# trip\n\n- hotel\n- flights\n');
+    const after = (await call('GET', '/api/state')).doc;
+    expect(after.root).toEqual(before.root);
+    expect(after.root.children.map((c: any) => c.text)).toEqual(['hotel']);
+    expect(after.suggestions).toEqual([]);
+    expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n- flights\n');
+    await call('POST', '/api/chat', { text: 'saved' });
+    expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe(toMarkdown(after.root));
+  } finally {
+    stopIt();
+  }
+});
+
+test('a directory with a map.md but no eda.json is refused, and the map.md is left as it was', () => {
+  const d = temp('eda-md-');
+  writeFileSync(join(d, 'map.md'), '# ideas\n\n- one\n');
+  expect(() => startServer({ dir: d, host: '127.0.0.1', port: 0 })).toThrow(/map\.md exists but eda\.json does not/);
+  expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe('# ideas\n\n- one\n');
+  expect(existsSync(join(d, 'eda.json'))).toBe(false);
+});
+
+test('eda serve on a directory with only a map.md exits 1 with one line and leaves no lock behind', async () => {
+  const d = temp('eda-md-');
+  writeFileSync(join(d, 'map.md'), '# ideas\n');
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), EDA_HOME: home, XDG_CONFIG_HOME: home };
+  delete env['CLAUDE_CODE_SESSION_ID'];
+  const p = Bun.spawn(['bun', join(import.meta.dir, '../src/cli.ts'), 'serve', d, '--host', '127.0.0.1'], { env, stdout: 'pipe', stderr: 'pipe' });
+  const [code, err] = await Promise.all([p.exited, new Response(p.stderr).text()]);
+  expect(code).toBe(1);
+  expect(err.trim().split('\n')).toEqual([`eda: ${join(d, 'map.md')} exists but eda.json does not; move map.md away or pick another directory`]);
+  expect(existsSync(join(d, 'eda.lock'))).toBe(false);
+  expect(existsSync(join(d, 'eda.json'))).toBe(false);
 });
 
 test('chat from the person is visible to Claude, and Claude replies without touching the map', async () => {
@@ -103,14 +138,6 @@ test('asking whether a map is ours does not make it ours; naming it does', async
   await expect(runTool(other, 'read_map', {})).rejects.toThrow(/no running map/);
   await runTool(other, 'read_map', { map: `${dir}/` });
   expect(await runTool(other, 'read_map', {})).toContain('[n1] trip');
-});
-
-test('attaching a session does not overwrite a pending hand edit of map.md', async () => {
-  writeFileSync(join(dir, 'map.md'), '# trip\n\n- hotel\n- visa\n');
-  const late = new Client('S3', '/y', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
-  await runTool(late, 'read_map', { map: dir });
-  const doc = (await person('GET', '/api/state')).json.doc;
-  expect(doc.suggestions.map((s: any) => s.text)).toContain('visa');
 });
 
 test('the channel resumes after what was delivered, or from when the session joined', () => {
@@ -178,87 +205,6 @@ test('a channel event carries the message and the node it is about', () => {
   expect(e.meta).toEqual({ map: '/m', chat_id: 'c7', kind: 'message', node_id: 'n2' });
 });
 
-test('a directory with only a map.md keeps it: its lines come back as candidates', async () => {
-  const d2 = temp('eda-md-');
-  writeFileSync(join(d2, 'map.md'), '# ideas\n\n- one\n  - one.a\n- two\n');
-  const s2 = startServer({ dir: d2, host: '127.0.0.1', port: 0 });
-  try {
-    const doc = s2.doc;
-    expect(doc.suggestions.map((s) => [s.kind, s.text, s.kind === 'add' ? s.children?.map((c) => c.text) : undefined])).toEqual([
-      ['edit', 'ideas', undefined],
-      ['add', 'one', ['one.a']],
-      ['add', 'two', undefined],
-    ]);
-  } finally {
-    s2.stop();
-  }
-});
-
-test('a map.md edit saved while a request body is still arriving is read as an addition', async () => {
-  const d3 = temp('eda-slow-');
-  const s3 = startServer({ dir: d3, host: '127.0.0.1', port: 0, title: 'r' });
-  try {
-    let push!: (s: string) => void;
-    const stream = new ReadableStream<Uint8Array>({
-      start(c) {
-        push = (s) => {
-          c.enqueue(new TextEncoder().encode(s));
-          c.close();
-        };
-      },
-    });
-    const pending = fetch(`http://127.0.0.1:${s3.server.port}/api/nodes`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
-      body: stream,
-      duplex: 'half',
-    } as RequestInit);
-    await Bun.sleep(100);
-    writeFileSync(join(d3, 'map.md'), '# r\n\n- editor child\n');
-    push(JSON.stringify({ parentId: 'n1', text: 'browser child' }));
-    expect((await pending).status).toBe(200);
-    const doc = s3.doc;
-    expect(doc.root.children.map((c) => c.text)).toEqual(['browser child']);
-    expect(doc.suggestions.map((s) => [s.kind, s.text])).toEqual([['add', 'editor child']]);
-  } finally {
-    s3.stop();
-  }
-});
-
-test('a map.md left over from a save cut short is rewritten, not offered as an edit', async () => {
-  const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
-  const { addChild, removeNode } = await import('../src/map.ts');
-  const d4 = temp('eda-crash-');
-  const doc = openMap(d4, 'c');
-  const n = addChild(doc, 'n1', 'gone soon');
-  saveMap(d4, doc);
-  const oldMd = readFileSync(join(d4, 'map.md'), 'utf8');
-  removeNode(doc, n.id);
-  saveMap(d4, doc);
-  // the crash: eda.json was written, map.md still the previous export, marker left behind
-  writeFileSync(join(d4, 'map.md'), oldMd);
-  writeFileSync(join(d4, '.eda-exporting'), '');
-  const reloaded = loadMap(d4)!;
-  syncMarkdown(d4, reloaded, true);
-  expect(reloaded.suggestions).toEqual([]);
-  expect(readFileSync(join(d4, 'map.md'), 'utf8')).toBe('# c\n\n');
-});
-
-test('restoring the previous map.md while eda was stopped is offered as an edit on start', async () => {
-  const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
-  const { addChild, editNode } = await import('../src/map.ts');
-  const d6 = temp('eda-offline-');
-  const doc = openMap(d6, 'o');
-  const n = addChild(doc, 'n1', 'A');
-  saveMap(d6, doc);
-  editNode(doc, n.id, { text: 'B' });
-  saveMap(d6, doc);
-  writeFileSync(join(d6, 'map.md'), '# o\n\n- A\n');
-  const reloaded = loadMap(d6)!;
-  syncMarkdown(d6, reloaded, true);
-  expect(reloaded.suggestions.map((s) => [s.kind, s.text])).toEqual([['edit', 'A']]);
-});
-
 test('registry records are only contacted on this host, on a numeric port', async () => {
   const { localBase } = await import('../src/mcp.ts');
   expect(localBase('0.0.0.0', 4000)).toBe('http://127.0.0.1:4000');
@@ -305,20 +251,6 @@ test('eda mcp pushes the person\'s chat into the session as a channel event', as
     unregister();
   }
 }, 15000);
-
-test('restoring the previous map.md by hand while running is offered as an edit', async () => {
-  const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
-  const { addChild, editNode } = await import('../src/map.ts');
-  const d5 = temp('eda-undo-');
-  const doc = openMap(d5, 'u');
-  const n = addChild(doc, 'n1', 'A');
-  saveMap(d5, doc);
-  editNode(doc, n.id, { text: 'B' });
-  saveMap(d5, doc);
-  writeFileSync(join(d5, 'map.md'), '# u\n\n- A\n');
-  syncMarkdown(d5, doc);
-  expect(doc.suggestions.map((s) => [s.kind, s.text])).toEqual([['edit', 'A']]);
-});
 
 test('a session whose cwd is not ASCII can reach its map', async () => {
   const jp = new Client('S7', '/tmp/日本語', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);

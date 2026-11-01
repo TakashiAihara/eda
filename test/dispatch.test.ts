@@ -886,19 +886,10 @@ test('mcp.ts offers no tool for the kaneo routes', async () => {
   expect(mcp).not.toContain('dispatch');
 });
 
-test('a map.md edit saved while dispatch runs is offered, not exported over', async () => {
+test('a task the person unlinks stops being polled and leaves the statuses', async () => {
   tasks.set('t9', { id: 't9', number: 49, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
   await person('POST', `/api/nodes/${hotel}/tasks`, { url: 'http://k/dashboard/workspace/W1/project/p1/task/t9' });
-  const md = readFileSync(join(dir, 'map.md'), 'utf8');
-  const run = person('POST', `/api/nodes/${hotel}/tasks/t9/dispatch`, { repo: 'o/slow' });
-  await Bun.sleep(150);
-  writeFileSync(join(dir, 'map.md'), `${md}- flights\n`);
-  expect((await run).status).toBe(200);
-  const s = await state();
-  expect(s.doc.suggestions.map((x: any) => [x.source.by, x.text])).toContainEqual(['md-edit', 'flights']);
-});
-
-test('a task the person unlinks stops being polled and leaves the statuses', async () => {
+  for (let i = 0; i < 100 && (await state()).taskStatus['t9'] === undefined; i++) await Bun.sleep(20);
   expect((await state()).taskStatus['t9']).toMatchObject({ status: 'to-do' });
   const reads = (): number => seen.filter((s) => s.method === 'GET' && s.path === '/api/task/t9').length;
   expect((await person('DELETE', `/api/nodes/${hotel}/tasks`, { task: 't9' })).status).toBe(200);

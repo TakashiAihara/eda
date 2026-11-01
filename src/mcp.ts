@@ -215,7 +215,7 @@ export async function runMcp(): Promise<void> {
       instructions: [
         'eda is a mind map the person grows one node at a time. You cannot write to it: you can read it, suggest one node, suggest one change to a node, and reply in its chat.',
         'To start a map, run `eda serve <dir> --title "<theme>"` in the background and give the person the url it prints. It records this session, so read_map and the chat work from then on.',
-        'Do not edit map.md or eda.json yourself: map.md edits only come back as candidates for the person, and eda.json is overwritten by the server.',
+        'Do not edit map.md or eda.json yourself: map.md is an export the server rewrites and never reads back, and eda.json is overwritten by the server.',
         'Messages the person types in the map arrive as <channel source="eda" map="..." node_id="...">. Answer them with the reply tool, and when nodes would help, offer them with suggest_node, one node per call.',
         `Up to ${MAX_PENDING} of your suggestions can wait at once. When that many are waiting, do not suggest again until the person adopts or rejects one. Each outcome arrives as a channel event with kind="decision". Never try to build out the map.`,
       ].join(' '),

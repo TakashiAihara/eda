@@ -2,8 +2,8 @@
 
 ## Words that collide
 
-- **suggestion** vs **candidate**: a *suggestion* is what an AI proposed through MCP (`source.by = ai`). A *candidate* is anything waiting in the candidate list, which also includes hand edits of `map.md` (`source.by = md-edit`). Every suggestion is a candidate; not every candidate is a suggestion. Both are `Suggestion` records in `eda.json`.
-- **map** vs **map.md**: the *map* is the tree held in `eda.json` by the server. `map.md` is an export of it; the server reads it back only to find hand edits, which become candidates.
+- **suggestion** vs **candidate**: a *suggestion* is what an AI proposed through MCP (`source.by = ai`). A *candidate* is anything waiting in the candidate list, which in maps saved before #5 also includes hand edits of `map.md` (`source.by = md-edit`). Every suggestion is a candidate; not every candidate is a suggestion. Both are `Suggestion` records in `eda.json`.
+- **map** vs **map.md**: the *map* is the tree held in `eda.json` by the server. `map.md` is an export of it, rewritten on every save and never read back.
 - **session**: always a Claude Code session (its `CLAUDE_CODE_SESSION_ID`), never a browser session.
 
 ## Terms
@@ -12,7 +12,7 @@
 |---|---|---|
 | map directory | One map: `eda.json` + `map.md` | the `<dir>` given to `eda serve` |
 | node | One line of the map. Has id, text, children, note, URLs, task links, origin | `Node` in `src/map.ts` |
-| origin | Who put a node or URL there: `human`, `ai` (adopted suggestion, with session/model), `md-edit` (adopted hand edit of map.md) | `Origin` |
+| origin | Who put a node or URL there: `human`, `ai` (adopted suggestion, with session/model), `md-edit` (adopted hand edit of map.md, in maps saved before #5) | `Origin` |
 | add suggestion | "put this one node under that node" | `Suggestion` with `kind: add` |
 | edit suggestion | "change this node's text and/or attach these URLs" | `Suggestion` with `kind: edit` |
 | adopt | A person accepts a candidate, optionally after rewriting its text/URLs | `POST /api/suggestions/:id/accept` |
