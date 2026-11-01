@@ -851,7 +851,7 @@ const dispatchedSees = async (key: string): Promise<string> => {
   tasks.set('t10', { id: 't10', number: 50, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
   const cfgHome = temp('eda-childenv-cfg-');
   mkdirSync(join(cfgHome, 'eda'), { recursive: true });
-  const cfg = { kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand: ['sh', '-c', 'echo KC'] }, spawn: { command: ['sh', '-c', 'echo "key=[$KANEO_API_KEY] other=[$EDA_TEST_OTHER]"'] } };
+  const cfg = { kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand: ['sh', '-c', 'echo KC'] }, spawn: { command: ['sh', '-c', 'echo "key=[$KANEO_API_KEY] set=[${KANEO_API_KEY+y}] other=[$EDA_TEST_OTHER]"'] } };
   writeFileSync(join(cfgHome, 'eda', 'config.json'), JSON.stringify(cfg));
   const env: Record<string, string> = { ...(process.env as Record<string, string>), XDG_CONFIG_HOME: cfgHome, EDA_HOME: temp('eda-childenv-home-'), KANEO_API_KEY: key, EDA_TEST_OTHER: 'kept' };
   delete env['CLAUDE_CODE_SESSION_ID'];
@@ -878,11 +878,15 @@ const dispatchedSees = async (key: string): Promise<string> => {
 };
 
 test('a KANEO_API_KEY eda refused is taken out of the dispatched command, and the rest of the environment stays', async () => {
-  expect(await dispatchedSees('K\r')).toContain('key=[] other=[kept]');
+  expect(await dispatchedSees('K\r')).toContain('key=[] set=[] other=[kept]');
 });
 
 test('a KANEO_API_KEY eda accepted reaches the dispatched command', async () => {
-  expect(await dispatchedSees('K')).toContain('key=[K] other=[kept]');
+  expect(await dispatchedSees('K')).toContain('key=[K] set=[y] other=[kept]');
+});
+
+test('an empty KANEO_API_KEY is not refused, so the dispatched command sees it as it was set', async () => {
+  expect(await dispatchedSees('')).toContain('key=[] set=[y] other=[kept]');
 });
 
 test("keyCommand's own stderr never reaches eda serve's stderr", async () => {

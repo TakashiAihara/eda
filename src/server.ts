@@ -90,7 +90,7 @@ export function startServer(opts: ServeOptions) {
   const kaneoKey = kaneoHost === null ? '' : envKeyOk ? envKey : keyFromCommand(cfg.kaneo?.keyCommand, opts.keyCommandMs ?? 15_000);
   // A refused key is left out of a dispatched command's environment, so one that fetches its own
   // key falls back to its own source instead of failing on this one (#34).
-  const dispatchEnv = !envKeyOk ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'KANEO_API_KEY')) : undefined;
+  const dispatchEnv = envKey !== '' && !envKeyOk ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'KANEO_API_KEY')) : undefined;
   // A string where an argv belongs is a config mistake: taken as one it would hand the whole
   // command line to spawn as a single argument. Dispatch is off instead, and says so here —
   // at start, where the person can still see it, rather than as a 500 at the click.
