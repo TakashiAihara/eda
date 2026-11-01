@@ -1,9 +1,20 @@
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const home = mkdtempSync(join(tmpdir(), 'eda-home-'));
+const made: string[] = [];
+const temp = (prefix: string): string => {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
+// Registered before anything below can throw, so a failed import still leaves nothing behind.
+afterAll(() => {
+  for (const d of made) rmSync(d, { recursive: true, force: true });
+});
+
+const home = temp('eda-home-');
 process.env['EDA_HOME'] = home;
 // Never the real ~/.config/eda: a kaneo host there would change what the tests see.
 process.env['XDG_CONFIG_HOME'] = home;
@@ -11,7 +22,7 @@ const { startServer } = await import('../src/server.ts');
 const { Client, describe: describeChat, runTool, undelivered } = await import('../src/mcp.ts');
 const { loadMap, token } = await import('../src/store.ts');
 
-const dir = mkdtempSync(join(tmpdir(), 'eda-map-'));
+const dir = temp('eda-map-');
 const { server, stop } = startServer({ dir, host: '127.0.0.1', port: 0, title: 'trip', session: 'S1', cwd: '/w' });
 afterAll(() => stop());
 
@@ -168,7 +179,7 @@ test('a channel event carries the message and the node it is about', () => {
 });
 
 test('a directory with only a map.md keeps it: its lines come back as candidates', async () => {
-  const d2 = mkdtempSync(join(tmpdir(), 'eda-md-'));
+  const d2 = temp('eda-md-');
   writeFileSync(join(d2, 'map.md'), '# ideas\n\n- one\n  - one.a\n- two\n');
   const s2 = startServer({ dir: d2, host: '127.0.0.1', port: 0 });
   try {
@@ -184,7 +195,7 @@ test('a directory with only a map.md keeps it: its lines come back as candidates
 });
 
 test('a map.md edit saved while a request body is still arriving is read as an addition', async () => {
-  const d3 = mkdtempSync(join(tmpdir(), 'eda-slow-'));
+  const d3 = temp('eda-slow-');
   const s3 = startServer({ dir: d3, host: '127.0.0.1', port: 0, title: 'r' });
   try {
     let push!: (s: string) => void;
@@ -217,7 +228,7 @@ test('a map.md edit saved while a request body is still arriving is read as an a
 test('a map.md left over from a save cut short is rewritten, not offered as an edit', async () => {
   const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
   const { addChild, removeNode } = await import('../src/map.ts');
-  const d4 = mkdtempSync(join(tmpdir(), 'eda-crash-'));
+  const d4 = temp('eda-crash-');
   const doc = openMap(d4, 'c');
   const n = addChild(doc, 'n1', 'gone soon');
   saveMap(d4, doc);
@@ -236,7 +247,7 @@ test('a map.md left over from a save cut short is rewritten, not offered as an e
 test('restoring the previous map.md while eda was stopped is offered as an edit on start', async () => {
   const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
   const { addChild, editNode } = await import('../src/map.ts');
-  const d6 = mkdtempSync(join(tmpdir(), 'eda-offline-'));
+  const d6 = temp('eda-offline-');
   const doc = openMap(d6, 'o');
   const n = addChild(doc, 'n1', 'A');
   saveMap(d6, doc);
@@ -298,7 +309,7 @@ test('eda mcp pushes the person\'s chat into the session as a channel event', as
 test('restoring the previous map.md by hand while running is offered as an edit', async () => {
   const { saveMap, syncMarkdown, openMap } = await import('../src/store.ts');
   const { addChild, editNode } = await import('../src/map.ts');
-  const d5 = mkdtempSync(join(tmpdir(), 'eda-undo-'));
+  const d5 = temp('eda-undo-');
   const doc = openMap(d5, 'u');
   const n = addChild(doc, 'n1', 'A');
   saveMap(d5, doc);
