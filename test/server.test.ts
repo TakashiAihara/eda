@@ -92,9 +92,23 @@ test('a hand edit of map.md is not read: the map and the candidate list stay, an
     expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n- flights\n');
     await call('POST', '/api/chat', { text: 'saved' });
     expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe(toMarkdown(after.root));
+    // Nor read on the write: the save exported over the edit without taking anything from it.
+    const saved = (await call('GET', '/api/state')).doc;
+    expect(saved.root).toEqual(before.root);
+    expect(saved.suggestions).toEqual([]);
   } finally {
     stopIt();
   }
+});
+
+test('starting on an existing map writes map.md again, from eda.json', () => {
+  const d = mkdtempSync(join(tmpdir(), 'eda-md-'));
+  const first = startServer({ dir: d, host: '127.0.0.1', port: 0, title: 'trip' });
+  first.stop();
+  writeFileSync(join(d, 'map.md'), '# stale\n');
+  const again = startServer({ dir: d, host: '127.0.0.1', port: 0 });
+  again.stop();
+  expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe('# trip\n\n');
 });
 
 test('a directory with a map.md but no eda.json is refused, and the map.md is left as it was', () => {

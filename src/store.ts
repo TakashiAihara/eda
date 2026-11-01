@@ -25,7 +25,6 @@ function writeAtomic(path: string, body: string, mode?: number): void {
   renameSync(tmp, path);
 }
 
-
 export function loadMap(dir: string): MapDoc | undefined {
   const p = join(dir, JSON_FILE);
   return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf8')) as MapDoc) : undefined;

@@ -110,6 +110,9 @@ export function startServer(opts: ServeOptions) {
     rev += 1;
   };
   remember(opts.session ?? null, opts.cwd ?? null);
+  // Exported once at start too: a map.md deleted, or left behind by a save cut short between the
+  // two files, would otherwise stay wrong until the first change.
+  saveMap(opts.dir, doc);
 
   /** null, arrays and scalars are valid JSON but not a record; read them as empty, so field reads give 400s rather than TypeErrors. */
   const rec = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});

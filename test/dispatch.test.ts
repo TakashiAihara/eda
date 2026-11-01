@@ -887,8 +887,10 @@ test('mcp.ts offers no tool for the kaneo routes', async () => {
 });
 
 test('a task the person unlinks stops being polled and leaves the statuses', async () => {
+  // Its own link: no test before this one is left to have linked t9 to the hotel node.
   tasks.set('t9', { id: 't9', number: 49, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
   await person('POST', `/api/nodes/${hotel}/tasks`, { url: 'http://k/dashboard/workspace/W1/project/p1/task/t9' });
+  // The poll runs every 50 ms here; up to 2 s for the first read of t9 to land.
   for (let i = 0; i < 100 && (await state()).taskStatus['t9'] === undefined; i++) await Bun.sleep(20);
   expect((await state()).taskStatus['t9']).toMatchObject({ status: 'to-do' });
   const reads = (): number => seen.filter((s) => s.method === 'GET' && s.path === '/api/task/t9').length;

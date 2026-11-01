@@ -59,7 +59,6 @@ export type Suggestion =
     }
   | { id: string; kind: 'edit'; nodeId: string; text?: string; urls: string[]; reason: string; source: SuggestionSource; at: string };
 
-
 /**
  * `system`: eda telling the session that suggested something what the person did with it.
  * `session` on a system line is the recipient; on an ai line it is the author.
