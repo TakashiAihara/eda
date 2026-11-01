@@ -546,7 +546,9 @@ test('a folded node at the level limit opens with a click and its children are d
   const { page, call, add, map, open } = await ui();
   const trip = await map();
   const stay = await add(trip.id, 'stay');
-  await add(stay.id, 'hotel');
+  const hotel = await add(stay.id, 'hotel');
+  // A level below hotel, so "one level more" is told from "every level".
+  await add(hotel.id, 'ryokan');
   const fly = await add(trip.id, 'fly');
   // Something the limit itself hides, so Alt+1 is seen to have cut.
   await add(fly.id, 'jal');
@@ -562,7 +564,9 @@ test('a folded node at the level limit opens with a click and its children are d
   await fold.click();
   // Unfolded on the server and drawn on the page: opening it has to reach past the limit too.
   await until('stay unfolded on the server', async () => child(await map(), 'stay').collapsed !== true);
+  // One level more, not all of them: ryokan stays under the limit, now at 2.
   await drawn(page, ['trip', 'stay', 'hotel', 'fly', 'jal']);
+  expect(await page.locator('header button.levels').textContent()).toBe('2 レベルまで表示中 ✕');
 }, 20_000);
 
 test('the count at a level limit takes in the suggestions waiting there, folded or not', async () => {
