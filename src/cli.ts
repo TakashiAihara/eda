@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { runMcp } from './mcp.ts';
 import { MapError } from './map.ts';
 import { startServer } from './server.ts';
+import { findSession, watchSession } from './session.ts';
 import { absDir, lockMap, readInstances, registerInstance, saveMap, token } from './store.ts';
 import { readXmind } from './xmind.ts';
 
@@ -26,6 +27,9 @@ function lanIp(): string {
   }
   return '127.0.0.1';
 }
+
+/** How often `eda serve` looks for the session that started it; a map outlives it by at most this. */
+const SESSION_POLL_MS = 5_000;
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -81,6 +85,18 @@ async function main(argv: string[]): Promise<number> {
       };
       process.on('SIGINT', stop);
       process.on('SIGTERM', stop);
+      // Ends with the session that started it, whether it runs as that session's background shell
+      // or was detached from it. One started outside a session, or whose process cannot be found,
+      // stays up as before.
+      if (session !== undefined) {
+        const proc = findSession(session);
+        if (proc === undefined) console.error(`eda: no running Claude Code process found for session ${session}; the map stays up after the session ends`);
+        else
+          watchSession(session, proc, () => {
+            console.error(`eda: session ${session} ended; stopping the map`);
+            stop();
+          }, SESSION_POLL_MS);
+      }
       const host = values.host === '0.0.0.0' ? lanIp() : values.host;
       console.log(JSON.stringify({ url: `http://${host}:${server.port}/#t=${token()}`, dir, port: server.port, pid: process.pid }));
       return await new Promise<number>(() => {});

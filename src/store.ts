@@ -111,7 +111,7 @@ export type Instance = { pid: number; dir: string; host: string; port: number; s
 
 const instancesDir = (): string => join(edaHome(), 'instances');
 
-function alive(pid: number): boolean {
+export function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
