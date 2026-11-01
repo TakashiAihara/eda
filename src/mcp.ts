@@ -272,19 +272,18 @@ export async function runMcp(): Promise<void> {
     await client.call(t, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: `c${pos}` }) });
     acked.set(t.dir, pos);
   };
-  // Maps already named as not taking this session's calls, each said once per eda mcp: a map
-  // restarted and later stale again is not named a second time.
-  const named = new Set<string>();
+  // Maps named as not taking this session's calls, said once while they stay so: one that comes
+  // back and later goes stale again is named again.
+  let named = new Set<string>();
   for (;;) {
     try {
       const { mine, stale } = await client.scan();
       // Otherwise the person's lines in such a map never arrive, and nothing says why.
       for (const d of stale) {
-        if (named.has(d)) continue;
-        named.add(d);
         // Every running map on the host is looked at, so this one may not be this session's at all.
-        console.error(`eda: the map at ${d} does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${STALE_HINT}`);
+        if (!named.has(d)) console.error(`eda: the map at ${d} does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${STALE_HINT}`);
       }
+      named = new Set(stale);
       for (const t of mine) {
         try {
           // A recorded position that failed to save is retried every pass until it sticks;

@@ -440,7 +440,9 @@ test('eda mcp names a map that does not take its calls once on stderr, however m
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const { registerInstance } = await import('../src/store.ts');
   // As an eda serve from before the AI got its own token answers /api/ai/rev.
-  const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('not found', { status: 404 }) });
+  // Until `back` is set; then as a map that is up again, until it is unset.
+  let back = false;
+  const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => (back ? Response.json({ rev: 1, sessions: [] }) : new Response('not found', { status: 404 })) });
   // A live pid for its record that is not this process's, which holds the record of the map above.
   const holder = Bun.spawn(['sleep', '30']);
   const holder2 = Bun.spawn(['sleep', '30']);
@@ -461,11 +463,15 @@ test('eda mcp names a map that does not take its calls once on stderr, however m
     // Passes at 0, 2, 4 and 6 s.
     await Bun.sleep(6500);
     const hint = 'An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.';
-    const lines = err.split('\n').filter((l) => l.includes('/old-map')).sort();
-    expect(lines).toEqual([
-      `eda: the map at /old-map does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${hint}`,
-      `eda: the map at /old-map-2 does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${hint}`,
-    ]);
+    const line = (d: string) => `eda: the map at ${d} does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${hint}`;
+    const lines = () => err.split('\n').filter((l) => l.includes('/old-map')).sort();
+    expect(lines()).toEqual([line('/old-map'), line('/old-map-2')]);
+    // Up again for a couple of passes, then stale again: named once more, each.
+    back = true;
+    await Bun.sleep(4500);
+    back = false;
+    await Bun.sleep(4500);
+    expect(lines()).toEqual([line('/old-map'), line('/old-map'), line('/old-map-2'), line('/old-map-2')]);
   } finally {
     await c.close();
     unregister();
@@ -474,7 +480,7 @@ test('eda mcp names a map that does not take its calls once on stderr, however m
     holder2.kill();
     old.stop(true);
   }
-}, 15000);
+}, 25000);
 
 test('a session whose cwd is not ASCII can reach its map', async () => {
   const jp = new Client('S7', '/tmp/日本語', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
