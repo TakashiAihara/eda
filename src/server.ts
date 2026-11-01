@@ -131,7 +131,9 @@ export function startServer(opts: ServeOptions) {
   /**
    * Wrap a handler: auth, save on success, errors as JSON. Which token a route takes comes from
    * its path, not from each route: `/api/ai/*` is the MCP server's, everything else the person's,
-   * so a route cannot be added on the wrong side by forgetting an argument.
+   * so a route is not put on the wrong side by forgetting an argument. The path is the one Bun
+   * hands over, with `..` already resolved: a route with `ai/` further down its path would need
+   * its side named by hand.
    */
   const api =
     (write: boolean, h: Handler) =>

@@ -230,17 +230,32 @@ test('the two tokens are different and each opens only its own routes', async ()
   await person('POST', `/api/suggestions/${s.id}/reject`, {});
 });
 
-test('a map that refuses the session token is named, not reported as no map at all', async () => {
-  const registry = () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }];
-  // The token an eda serve from before the split would answer with: the person's, or nothing it knows.
-  const stale = new Client('S1', '/w', registry, () => 'stale-token');
-  await expect(runTool(stale, 'read_map', {})).rejects.toThrow(`these refused its token, which an eda serve started before the AI token split does: ${dir}. Restart that eda serve.`);
-  await expect(runTool(stale, 'read_map', { map: dir })).rejects.toThrow(/^unauthorized: .* refused this session's token; .*restart it$/);
-  // What the last look found is not carried into the next: a map named that is not running is just that.
-  await expect(runTool(stale, 'read_map', {})).rejects.toThrow(/refused its token/);
-  await expect(runTool(stale, 'read_map', { map: '/nowhere' })).rejects.toThrow(/^no running map at \/nowhere$/);
-  // A map that is just not this session's is still the plain answer.
-  await expect(runTool(new Client('S-nobody', '/w', registry), 'read_map', {})).rejects.toThrow(/^no running map for this session\. Start one/);
+test('a map that does not take the session token is named, not reported as no map at all', async () => {
+  const hint = 'An eda serve started before the AI got its own token, or under another EDA_HOME, does that: restart it.';
+  // As an eda serve from before the split answers: no /api/ai/rev at all, Bun's plain 404.
+  const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('not found', { status: 404 }) });
+  // Nothing listening: a map that went down, which is not the same answer.
+  const down = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('') });
+  const downPort = down.port!;
+  down.stop(true);
+  try {
+    const at = (d: string, port: number) => ({ pid: 1, dir: d, host: '127.0.0.1', port, startedAt: '' });
+    // A token this server does not know: its 401.
+    const wrong = new Client('S1', '/w', () => [at(dir, server.port!)], () => 'stale-token');
+    await expect(runTool(wrong, 'read_map', {})).rejects.toThrow(`no running map for this session; these do not take its calls: ${dir}. ${hint}`);
+    await expect(runTool(wrong, 'read_map', { map: dir })).rejects.toThrow(`http://127.0.0.1:${server.port} does not take this session's calls. ${hint}`);
+    const pre = new Client('S1', '/w', () => [at('/old-map', old.port!), at('/down-map', downPort)]);
+    await expect(runTool(pre, 'read_map', {})).rejects.toThrow(`no running map for this session; these do not take its calls: /old-map. ${hint}`);
+    // What one look found is not carried into the next: a map named that is not running is just that.
+    await expect(runTool(wrong, 'read_map', { map: '/nowhere' })).rejects.toThrow(/^no running map at \/nowhere$/);
+    // A map that is just not this session's, or down, is still the plain answer.
+    await expect(runTool(new Client('S-nobody', '/w', () => [at(dir, server.port!), at('/down-map', downPort)]), 'read_map', {})).rejects.toThrow(/^no running map for this session\. Start one/);
+    // eda's own 404 (a JSON error from a handler) is not a missing route.
+    const own = await runTool(claude, 'suggest_edit', { node_id: 'n-none', text: 'x', reason: '' }).catch((e: Error) => e.message);
+    expect(own).toBe('no node n-none');
+  } finally {
+    old.stop(true);
+  }
 });
 
 test('an AI call without a session is refused', async () => {

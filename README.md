@@ -78,7 +78,7 @@ A map is a directory:
 - The `x-eda-session` header is taken as sent: any holder of `ai-token` can act as any session (use its suggestion slots, mark its messages delivered).
 - `eda serve` binds `0.0.0.0` and speaks plain HTTP: the map is reachable from the whole LAN, and the token travels unencrypted. Pass `--host 127.0.0.1` to keep it local, and do not expose the port to the internet.
 - To revoke a token, stop the running maps, delete `$EDA_HOME/token` or `$EDA_HOME/ai-token`, and start them again; a new one is created. Running MCP servers read `ai-token` on every call, so they pick up a new one without a restart.
-- Upgrading from the one-token version: restart every running `eda serve` (an old one refuses the new MCP server's calls, and the MCP tools name it), and delete `$EDA_HOME/token` once so the person's token every MCP process held so far stops working.
+- Upgrading from the one-token version, in this order: stop every running `eda serve`; restart the Claude Code sessions, so their `eda mcp` is the new one (an old one reads `$EDA_HOME/token` on every call and would pick up a new person token too); delete `$EDA_HOME/token`, so the token the old MCP servers held stops working; start the maps again and open the new URL. An `eda serve` still running from before refuses the new MCP server's calls, and the MCP tools name it.
 
 ## Contributing
 
