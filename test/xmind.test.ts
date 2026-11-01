@@ -60,9 +60,9 @@ const contentJson = JSON.stringify([
             markers: [{ markerId: 'priority-1' }, { markerId: 'flag-red' }],
             children: { attached: [{ title: 'near\nthe station' }] },
           },
-          { title: 'budget' },
+          { title: 'budget', labels: ['money'], image: { src: 'xap:resources/a.png' } },
         ],
-        detached: [{ title: 'floating note' }],
+        detached: [{ title: 'floating note', children: { attached: [{ title: 'under it' }] } }],
       },
     },
     relationships: [{ end1Id: 'a', end2Id: 'b' }],
@@ -70,7 +70,7 @@ const contentJson = JSON.stringify([
   { title: 'Sheet B', rootTopic: { title: 'other' } },
 ]);
 
-const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="no"?><xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" xmlns:xlink="http://www.w3.org/1999/xlink" version="2.0"><sheet id="s1"><topic id="t1" structure-class="org.xmind.ui.map.unbalanced"><title>Q&amp;A &lt;draft&gt;</title><children><topics type="attached"><topic id="t2" xlink:href="https://example.com/"><title>first</title><marker-refs><marker-ref marker-id="priority-1"/></marker-refs><notes><plain>a note</plain></notes><children><topics type="attached"><topic id="t3"><title>line&#10;two &#x263A; &#99999999;</title></topic></topics></children></topic><topic id="t4"><title>second</title></topic></topics><topics type="detached"><topic id="t5"><title>floating</title></topic></topics></children></topic><title>Sheet 1</title></sheet></xmap-content>`;
+const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="no"?><xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" xmlns:xlink="http://www.w3.org/1999/xlink" version="2.0"><sheet id="s1"><topic id="t1" structure-class="org.xmind.ui.map.unbalanced"><title>Q&amp;A &lt;draft&gt;</title><children><topics type="attached"><topic id="t2" xlink:href="https://example.com/"><title>first</title><marker-refs><marker-ref marker-id="priority-1"/></marker-refs><notes><plain>a note</plain></notes><children><topics type="attached"><topic id="t3"><title>line&#10;two &#x263A; &#99999999;</title></topic></topics></children></topic><topic id="t4"><title><![CDATA[second & <more>]]></title><labels><label>x</label></labels><xhtml:img xhtml:src="xap:a.png"/></topic></topics><topics type="detached"><topic id="t5"><title>floating</title><children><topics type="attached"><topic id="t6"><title>under it</title></topic></topics></children></topic></topics></children></topic><title>Sheet 1</title><relationships><relationship end1="t2" end2="t4"/></relationships></sheet></xmap-content>`;
 
 test('content.json: sheets, nesting, only attached children, and a count of what is left behind', () => {
   const sheets = readXmind(zip({ 'content.json': contentJson }));
@@ -82,7 +82,7 @@ test('content.json: sheets, nesting, only attached children, and a count of what
       { text: 'budget', children: [] },
     ],
   });
-  expect(sheets[0]!.dropped).toEqual({ notes: 1, links: 1, markers: 2, 'detached topics': 1, relationships: 1 });
+  expect(sheets[0]!.dropped).toEqual({ notes: 1, links: 1, markers: 2, labels: 1, images: 1, 'detached topics': 2, relationships: 1 });
   expect(sheets[1]!.dropped).toEqual({});
 });
 
@@ -94,10 +94,10 @@ test('content.xml (XMind 8): references decoded, a self-closing marker does not 
     text: 'Q&A <draft>',
     children: [
       { text: 'first', children: [{ text: 'line\ntwo ☺ &#99999999;', children: [] }] },
-      { text: 'second', children: [] },
+      { text: 'second & <more>', children: [] },
     ],
   });
-  expect(sheet!.dropped).toEqual({ notes: 1, links: 1, markers: 1, 'detached topics': 1 });
+  expect(sheet!.dropped).toEqual({ notes: 1, links: 1, markers: 1, labels: 1, images: 1, 'detached topics': 2, relationships: 1 });
 });
 
 test('a stray closing tag in content.xml does not break the rest', () => {
@@ -134,11 +134,19 @@ test('a file that is not a zip, a cut-off zip, or a zip without content is refus
   const dirAt = new DataView(long.buffer).getUint32(long.length - 22 + 16, true);
   new DataView(long.buffer).setUint32(dirAt + 20, long.length * 2, true);
   expect(() => readXmind(long)).toThrow('broken zip: content.json runs past the end of the file');
+  expect(() => readXmind(zip({ 'content.json': '{"a":1}' }))).toThrow('content.json is not a list of sheets with a rootTopic');
+  expect(() => readXmind(zip({ 'content.json': '[{"rootTopic":{"title":"r","children":{"attached":{}}}}]' }))).toThrow('the subtopics of "r" are not a list');
+});
+
+test('a content file inflating past 64 MiB is refused, one just under is read', () => {
+  expect(() => unzip(zip({ 'content.json': 'a'.repeat(64 * 1024 * 1024 + 1) }, true), ['content.json'])).toThrow('content.json is larger than 64 MiB');
+  expect(unzip(zip({ 'content.json': 'a'.repeat(64 * 1024 * 1024) }, true), ['content.json']).get('content.json')!.length).toBe(64 * 1024 * 1024);
 });
 
 test('a topic with no title stops the import and names its parent', () => {
   const noTitle = JSON.stringify([{ title: 'S', rootTopic: { title: 'trip', children: { attached: [{ title: '  ' }] } } }]);
   expect(() => readXmind(zip({ 'content.json': noTitle }))).toThrow('a topic has no title (under "trip")');
+  expect(() => readXmind(zip({ 'content.json': '[{"rootTopic":{"title":5}}]' }))).toThrow(/^a topic has no title;/);
   const xml = '<xmap-content><sheet><topic><title>root</title><children><topics type="attached"><topic></topic></topics></children></topic></sheet></xmap-content>';
   expect(() => readXmind(zip({ 'content.xml': xml }))).toThrow('a topic has no title (under "root")');
 });
@@ -175,7 +183,7 @@ test('eda import writes a new map, picks a sheet, says what it left behind, and 
   const first = await cli(home, 'import', file, join(tmp, 'a'));
   expect(first.code).toBe(0);
   expect(readFileSync(join(tmp, 'a', 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n  - near the station\n- budget\n');
-  expect(first.out).toContain('left behind (eda does not take them): 1 detached topics, 1 notes, 1 links, 2 markers, 1 relationships');
+  expect(first.out).toContain('left behind (eda does not take them): 2 detached topics, 1 notes, 1 links, 2 markers, 1 labels, 1 images, 1 relationships');
 
   const second = await cli(home, 'import', file, join(tmp, 'b'), '--sheet', '2');
   expect(second.code).toBe(0);
@@ -207,15 +215,22 @@ test('eda import reports a bad file in one line and leaves no directory behind',
   const noTitle = join(tmp, 'blank.xmind');
   writeFileSync(noTitle, zip({ 'content.json': JSON.stringify([{ rootTopic: { title: 'r', children: { attached: [{}] } } }]) }));
 
-  for (const [file, message] of [
-    [join(tmp, 'nope.xmind'), 'no such file'],
-    [noTitle, 'a topic has no title (under "r")'],
+  const notAMap = join(tmp, 'other.xmind');
+  writeFileSync(notAMap, zip({ 'content.json': '{"a":1}' }));
+  writeFileSync(join(tmp, 'a-file'), 'x');
+
+  for (const [file, out, message] of [
+    [join(tmp, 'nope.xmind'), 'out', 'no such file'],
+    [noTitle, 'out', 'a topic has no title (under "r")'],
+    [notAMap, 'out', 'content.json is not a list of sheets'],
+    [noTitle, 'a-file', 'not a directory'],
   ] as const) {
-    const r = await cli(home, 'import', file, join(tmp, 'out'));
+    const r = await cli(home, 'import', file, join(tmp, out));
     expect(r.code).toBe(1);
     expect(r.err.toLowerCase()).toContain(message);
     expect(r.err.trim().split('\n')).toHaveLength(1);
     expect(r.err.startsWith('eda: ')).toBe(true);
     expect(existsSync(join(tmp, 'out'))).toBe(false);
+    expect(readFileSync(join(tmp, 'a-file'), 'utf8')).toBe('x');
   }
 });

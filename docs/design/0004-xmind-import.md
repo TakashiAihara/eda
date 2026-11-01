@@ -19,8 +19,8 @@ Status: implemented (issue #30).
 | title | `text` |
 | attached subtopics | children |
 | notes, links, markers, labels, images | dropped, counted |
-| floating (detached) and other non-attached topics, relationships | dropped, counted |
-| folded state, boundaries, summaries, styles | dropped |
+| floating (detached) and other non-attached topics (summary topics too), with every topic under them; relationships | dropped, counted |
+| folded state, boundary and summary shapes, styles | dropped |
 | a topic with no title (an image-only topic) | the import stops and names the parent |
 
 - Notes, links, markers and folded state have eda fields, but the person's two files have none of them, so they are not mapped yet. The import prints what it left behind, so a file that uses them shows it, and that is when to map them.

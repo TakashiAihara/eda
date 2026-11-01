@@ -82,12 +82,12 @@ async function main(argv: string[]): Promise<number> {
         return 2;
       }
       const dir = resolve(positionals[1]!);
-      // Only into an empty or new directory: an eda.json or a hand-written map.md there is the person's.
-      if (existsSync(dir) && readdirSync(dir).length > 0) {
-        console.error(`eda: ${dir} is not empty; import into a new directory`);
-        return 1;
-      }
       try {
+        // Only into an empty or new directory: an eda.json or a hand-written map.md there is the person's.
+        if (existsSync(dir) && readdirSync(dir).length > 0) {
+          console.error(`eda: ${dir} is not empty; import into a new directory`);
+          return 1;
+        }
         const sheets = readXmind(readFileSync(positionals[0]!));
         const n = Number(values.sheet);
         const sheet = sheets[n - 1];

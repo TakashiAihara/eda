@@ -57,25 +57,40 @@ function readZip(bytes: Uint8Array, wanted: string[]): Map<string, Uint8Array> {
     if (start + size > bytes.length) throw new MapError(`broken zip: ${name} runs past the end of the file`);
     const raw = bytes.subarray(start, start + size);
     if (method === 0) files.set(name, raw);
-    else if (method === 8) files.set(name, new Uint8Array(inflateRawSync(raw, { maxOutputLength: MAX_CONTENT })));
+    else if (method === 8) files.set(name, inflate(raw, name));
     else throw new MapError(`unsupported zip compression ${method} in ${name}`);
   }
   return files;
+}
+
+function inflate(raw: Uint8Array, name: string): Uint8Array {
+  try {
+    return new Uint8Array(inflateRawSync(raw, { maxOutputLength: MAX_CONTENT }));
+  } catch (err) {
+    if (err instanceof RangeError) throw new MapError(`${name} is larger than ${MAX_CONTENT / 1024 / 1024} MiB; not reading it`);
+    throw err;
+  }
 }
 
 export function readXmind(bytes: Uint8Array): XmindSheet[] {
   const files = unzip(bytes, ['content.json', 'content.xml']);
   const json = files.get('content.json');
   // XMind 2020 also writes a content.xml, but only as a "please upgrade" stub: json wins.
-  if (json) return fromJson(JSON.parse(new TextDecoder().decode(json)));
+  if (json) {
+    const sheets: unknown = JSON.parse(new TextDecoder().decode(json));
+    if (!Array.isArray(sheets) || sheets.some((s) => typeof s?.rootTopic !== 'object' || s.rootTopic === null)) {
+      throw new MapError('content.json is not a list of sheets with a rootTopic');
+    }
+    return fromJson(sheets);
+  }
   const xml = files.get('content.xml');
   if (xml) return fromXml(new TextDecoder().decode(xml));
   throw new MapError('no content.json or content.xml in the file');
 }
 
 /** eda nodes cannot be empty; a topic that is only an image has nothing to carry over. */
-function title(text: string | undefined, parent: string | undefined): string {
-  if (text !== undefined && text.trim() !== '') return text;
+function title(text: unknown, parent: string | undefined): string {
+  if (typeof text === 'string' && text.trim() !== '') return text;
   throw new MapError(`a topic has no title${parent === undefined ? '' : ` (under "${parent}")`}; give it one in XMind and import again`);
 }
 
@@ -103,8 +118,10 @@ function fromJson(sheets: { title?: string; rootTopic: JsonTopic; relationships?
       tally(dropped, 'markers', t.markers?.length ?? 0);
       tally(dropped, 'labels', t.labels?.length ?? 0);
       if (t.image !== undefined) tally(dropped, 'images');
-      for (const [kind, list] of Object.entries(t.children ?? {})) if (kind !== 'attached') tally(dropped, `${kind} topics`, list.length);
-      return { text, children: (t.children?.['attached'] ?? []).map((c) => topic(c, text)) };
+      for (const [kind, list] of Object.entries(t.children ?? {})) if (kind !== 'attached') tally(dropped, `${kind} topics`, size(list));
+      const attached = t.children?.['attached'] ?? [];
+      if (!Array.isArray(attached)) throw new MapError(`the subtopics of "${text}" are not a list`);
+      return { text, children: attached.map((c) => topic(c, text)) };
     };
     const root = topic(s.rootTopic);
     tally(dropped, 'relationships', s.relationships?.length ?? 0);
@@ -112,26 +129,33 @@ function fromJson(sheets: { title?: string; rootTopic: JsonTopic; relationships?
   });
 }
 
+/** A dropped topic takes its whole subtree with it; count every topic in it. */
+function size(list: JsonTopic[] | unknown): number {
+  if (!Array.isArray(list)) return 0;
+  return list.reduce((n: number, t: JsonTopic) => n + 1 + Object.values(t?.children ?? {}).reduce((m, l) => m + size(l), 0), 0);
+}
+
 type El = { name: string; attrs: Record<string, string>; children: El[]; text: string };
 
 /**
- * Enough XML for XMind's content.xml: elements, attributes, text and character references.
- * shortcut: no CDATA, and a `>` inside a comment or an attribute value ends the tag early; XMind writes neither.
+ * Enough XML for XMind's content.xml: elements, attributes, text, CDATA and character references.
+ * shortcut: a `>` inside a comment or an attribute value ends the tag early; XMind writes neither.
  */
 function parseXml(xml: string): El {
   const top: El = { name: '', attrs: {}, children: [], text: '' };
   const stack = [top];
-  for (const m of xml.matchAll(/<(\/?)([\w:.-]+)([^>]*?)(\/?)>|<[?!][^>]*>|([^<]+)/g)) {
+  for (const m of xml.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>|<(\/?)([\w:.-]+)([^>]*?)(\/?)>|<[?!][^>]*>|([^<]+)/g)) {
     const cur = stack[stack.length - 1]!;
-    if (m[5] !== undefined) cur.text += decode(m[5]);
-    else if (m[2] === undefined) continue;
-    else if (m[1]) {
+    if (m[1] !== undefined) cur.text += m[1];
+    else if (m[6] !== undefined) cur.text += decode(m[6]);
+    else if (m[3] === undefined) continue;
+    else if (m[2]) {
       if (stack.length > 1) stack.pop();
     } else {
-      const el: El = { name: m[2].replace(/^.*:/, ''), attrs: {}, children: [], text: '' };
-      for (const a of m[3]!.matchAll(/([\w:.-]+)="([^"]*)"/g)) el.attrs[a[1]!] = decode(a[2]!);
+      const el: El = { name: m[3].replace(/^.*:/, ''), attrs: {}, children: [], text: '' };
+      for (const a of m[4]!.matchAll(/([\w:.-]+)="([^"]*)"/g)) el.attrs[a[1]!] = decode(a[2]!);
       cur.children.push(el);
-      if (!m[4]) stack.push(el);
+      if (!m[5]) stack.push(el);
     }
   }
   return top;
@@ -148,6 +172,9 @@ function decode(s: string): string {
 
 const kids = (el: El, name: string): El[] => el.children.filter((c) => c.name === name);
 
+const xmlSize = (topics: El[]): number =>
+  topics.reduce((n, t) => n + 1 + xmlSize(kids(t, 'children').flatMap((c) => kids(c, 'topics')).flatMap((g) => kids(g, 'topic'))), 0);
+
 function fromXml(xml: string): XmindSheet[] {
   const content = kids(parseXml(xml), 'xmap-content')[0];
   if (!content) throw new MapError('content.xml has no xmap-content');
@@ -163,7 +190,7 @@ function fromXml(xml: string): XmindSheet[] {
       tally(dropped, 'labels', kids(t, 'labels').flatMap((l) => kids(l, 'label')).length);
       tally(dropped, 'images', kids(t, 'img').length);
       const groups = kids(t, 'children').flatMap((c) => kids(c, 'topics'));
-      for (const g of groups) if (g.attrs['type'] !== 'attached') tally(dropped, `${g.attrs['type'] ?? 'other'} topics`, kids(g, 'topic').length);
+      for (const g of groups) if (g.attrs['type'] !== 'attached') tally(dropped, `${g.attrs['type'] ?? 'other'} topics`, xmlSize(kids(g, 'topic')));
       return {
         text,
         children: groups
