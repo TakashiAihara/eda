@@ -127,6 +127,29 @@ test('removing a node drops suggestions aimed at it', () => {
   expect(() => removeNode(d, 'n1')).toThrow(/root/);
 });
 
+test("map.md puts a node's URLs after its text as links that survive parentheses and angle brackets", () => {
+  const d = newMap('plan');
+  addUrl(d, 'n1', 'https://root.example/');
+  const a = addChild(d, 'n1', 'a');
+  addUrl(d, a.id, 'https://x.example/a_(b');
+  addUrl(d, a.id, 'https://y.example/c>d');
+  addChild(d, a.id, 'a1');
+  expect(toMarkdown(d.root)).toBe(
+    '# plan [link](<https://root.example/>)\n\n- a [link](<https://x.example/a_(b>) [link](<https://y.example/c%3Ed>)\n  - a1\n',
+  );
+});
+
+test("map.md puts a node's note under its line as a quote, at that node's depth, every line of it", () => {
+  const d = newMap('plan');
+  editNode(d, 'n1', { note: 'root note' });
+  const a = addChild(d, 'n1', 'a');
+  editNode(d, a.id, { note: 'first\n\n- third' });
+  const a1 = addChild(d, a.id, 'a1');
+  editNode(d, a1.id, { note: 'deep' });
+  addChild(d, 'n1', 'b');
+  expect(toMarkdown(d.root)).toBe('# plan\n\n> root note\n\n- a\n  > first\n  >\n  > - third\n  - a1\n    > deep\n- b\n');
+});
+
 test('map.md is the tree as nested bullets under the root heading', () => {
   const d = newMap('plan');
   const a = addChild(d, 'n1', 'a');
