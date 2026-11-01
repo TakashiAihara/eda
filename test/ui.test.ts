@@ -103,6 +103,9 @@ const focusId = (page: Page): Promise<string | null> =>
 const zoomOf = (page: Page): Promise<string | null> =>
   page.evaluate(() => document.querySelector<HTMLElement>('.tree')?.style.zoom ?? null);
 
+/** A node's own fold button, not the reject buttons of the ideas drawn under it. */
+const foldButton = (page: Page, id: string) => page.locator(`.node[data-id="${id}"]`).locator('xpath=..').locator(':scope > button.fold');
+
 const keySheetOpen = (page: Page): Promise<boolean> => page.evaluate(() => (document.getElementById('keys') as HTMLDialogElement).open);
 
 /** The markers drawn on the selected node: a priority keeps both its classes. */
@@ -500,13 +503,13 @@ test('the zoom buttons zoom out, in and back, and leave the map its keys', async
   await open();
 
   await page.locator(`.node[data-id="${stay.id}"]`).click();
-  await page.locator('header [data-key="zoom-in"]').click();
-  await page.locator('header [data-key="zoom-in"]').click();
+  for (let i = 0; i < 3; i++) await page.locator('header [data-key="zoom-in"]').click();
+  expect(await zoomOf(page)).toBe('1.3');
+  expect(await page.locator('header .zoom').textContent()).toBe('130%');
+  await page.locator('header [data-key="zoom-out"]').click();
   expect(await zoomOf(page)).toBe('1.2');
   expect(await page.locator('header .zoom').textContent()).toBe('120%');
-  await page.locator('header [data-key="zoom-out"]').click();
-  expect(await zoomOf(page)).toBe('1.1');
-  expect(await page.locator('header .zoom').textContent()).toBe('110%');
+  // From 120%, where one step out would not reach 100% too.
   await page.locator('header [data-key="zoom-reset"]').click();
   expect(await zoomOf(page)).toBe('1');
   expect(await page.locator('header .zoom').textContent()).toBe('100%');
@@ -520,19 +523,23 @@ test('the +N at a level limit shows every level again and saves no fold', async 
   const { page, add, map, open } = await ui();
   const trip = await map();
   const stay = await add(trip.id, 'stay');
-  await add(stay.id, 'hotel');
+  const hotel = await add(stay.id, 'hotel');
+  // Two levels under the cut, so "every level" is told from "one more".
+  await add(hotel.id, 'ryokan');
   await add(trip.id, 'fly');
   await open();
 
   await page.locator(`.node[data-id="${trip.id}"]`).click();
   await page.keyboard.press('Alt+1');
   await drawn(page, ['trip', 'stay', 'fly']);
-  const cut = page.locator(`.node[data-id="${stay.id}"]`).locator('xpath=..').locator('button.fold');
+  const cut = foldButton(page, stay.id);
   expect(await cut.textContent()).toBe('+1');
   await cut.click();
-  await drawn(page, ['trip', 'stay', 'hotel', 'fly']);
+  await drawn(page, ['trip', 'stay', 'hotel', 'ryokan', 'fly']);
   expect(await page.locator('header button.levels').count()).toBe(0);
-  expect(shape(await map())).toEqual({ text: 'trip', children: [{ text: 'stay', children: [{ text: 'hotel', children: [] }] }, { text: 'fly', children: [] }] });
+  // Given a moment for a fold the click might have sent to land.
+  await Bun.sleep(300);
+  expect(shape(await map())).toEqual({ text: 'trip', children: [{ text: 'stay', children: [{ text: 'hotel', children: [{ text: 'ryokan', children: [] }] }] }, { text: 'fly', children: [] }] });
 }, 20_000);
 
 test('a folded node at the level limit opens with a click and its children are drawn, not only unfolded on the server', async () => {
@@ -540,19 +547,22 @@ test('a folded node at the level limit opens with a click and its children are d
   const trip = await map();
   const stay = await add(trip.id, 'stay');
   await add(stay.id, 'hotel');
-  await add(trip.id, 'fly');
+  const fly = await add(trip.id, 'fly');
+  // Something the limit itself hides, so Alt+1 is seen to have cut.
+  await add(fly.id, 'jal');
   await call('PATCH', `/api/nodes/${stay.id}`, { collapsed: true });
   await open();
 
   await page.locator(`.node[data-id="${trip.id}"]`).click();
   await page.keyboard.press('Alt+1');
   await drawn(page, ['trip', 'stay', 'fly']);
-  const fold = page.locator(`.node[data-id="${stay.id}"]`).locator('xpath=..').locator('button.fold');
+  await page.locator('header button.levels').waitFor();
+  const fold = foldButton(page, stay.id);
   expect(await fold.textContent()).toBe('+1');
   await fold.click();
   // Unfolded on the server and drawn on the page: opening it has to reach past the limit too.
   await until('stay unfolded on the server', async () => child(await map(), 'stay').collapsed !== true);
-  await drawn(page, ['trip', 'stay', 'hotel', 'fly']);
+  await drawn(page, ['trip', 'stay', 'hotel', 'fly', 'jal']);
 }, 20_000);
 
 test('the count at a level limit takes in the suggestions waiting there, folded or not', async () => {
@@ -561,33 +571,33 @@ test('the count at a level limit takes in the suggestions waiting there, folded 
   const stay = await add(trip.id, 'stay');
   const hotel = await add(stay.id, 'hotel');
   await add(trip.id, 'fly');
-  // Two ideas waiting under stay and one under hotel, as the AI side sends them.
+  // Two ideas waiting under stay and one under hotel, as the AI side sends them: three, the most
+  // one session may have waiting (MAX_PENDING), so a fourth would be refused.
   await suggest(stay.id, 'ryokan');
   await suggest(stay.id, 'hostel');
   await suggest(hotel.id, 'breakfast');
   await open();
 
-  // The node's own button, not the reject buttons of the ideas drawn under it.
-  const foldOf = (id: string) => page.locator(`.node[data-id="${id}"]`).locator('xpath=..').locator(':scope > button.fold');
+  const foldAt = (id: string) => foldButton(page, id);
   await page.locator(`.node[data-id="${trip.id}"]`).click();
   // Cut at stay: its one child and the two ideas under it are what is hidden there.
   await page.keyboard.press('Alt+1');
   await drawn(page, ['trip', 'stay', 'fly']);
-  expect(await foldOf(stay.id).textContent()).toBe('+3');
+  expect(await foldAt(stay.id).textContent()).toBe('+3');
   // Cut at hotel: the idea under it, and no hotel child, since it has none.
   await page.keyboard.press('Alt+2');
   await drawn(page, ['trip', 'stay', 'hotel', 'ryokan', 'hostel', 'fly']);
-  expect(await foldOf(hotel.id).textContent()).toBe('+1');
+  expect(await foldAt(hotel.id).textContent()).toBe('+1');
 
   // Folded at the cut: the same count, from the fold button.
   await page.keyboard.press('Alt+0');
   await call('PATCH', `/api/nodes/${stay.id}`, { collapsed: true });
   // Folded, the ideas still show under it (only the cut hides them), and the count is its child alone.
   await drawn(page, ['trip', 'stay', 'ryokan', 'hostel', 'fly']);
-  expect(await foldOf(stay.id).textContent()).toBe('+1');
+  expect(await foldAt(stay.id).textContent()).toBe('+1');
   await page.keyboard.press('Alt+1');
   await drawn(page, ['trip', 'stay', 'fly']);
-  expect(await foldOf(stay.id).textContent()).toBe('+3');
+  expect(await foldAt(stay.id).textContent()).toBe('+3');
 }, 20_000);
 
 test('when kaneo refuses the project list, the node panel says why and offers another try', async () => {
