@@ -443,7 +443,10 @@ test('eda mcp names a map that does not take its calls once on stderr, however m
   const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('not found', { status: 404 }) });
   // A live pid for its record that is not this process's, which holds the record of the map above.
   const holder = Bun.spawn(['sleep', '30']);
+  const holder2 = Bun.spawn(['sleep', '30']);
   const unregister = registerInstance({ pid: holder.pid, dir: '/old-map', host: '127.0.0.1', port: old.port!, session: 'S1', startedAt: '' });
+  // A second one, so "once" is per map and not once for all of them.
+  const unregister2 = registerInstance({ pid: holder2.pid, dir: '/old-map-2', host: '127.0.0.1', port: old.port!, session: 'S1', startedAt: '' });
   const transport = new StdioClientTransport({
     command: 'bun',
     args: [join(import.meta.dir, '../src/cli.ts'), 'mcp'],
@@ -455,14 +458,20 @@ test('eda mcp names a map that does not take its calls once on stderr, however m
   const c = new McpClient({ name: 't', version: '0' });
   try {
     await c.connect(transport);
-    // Three passes at 2 s each.
+    // Passes at 0, 2, 4 and 6 s.
     await Bun.sleep(6500);
-    const lines = err.split('\n').filter((l) => l.includes('/old-map'));
-    expect(lines).toEqual([`eda: the map at /old-map does not take this session's calls, so its chat does not reach the session. An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.`]);
+    const hint = 'An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.';
+    const lines = err.split('\n').filter((l) => l.includes('/old-map')).sort();
+    expect(lines).toEqual([
+      `eda: the map at /old-map does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${hint}`,
+      `eda: the map at /old-map-2 does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${hint}`,
+    ]);
   } finally {
     await c.close();
     unregister();
+    unregister2();
     holder.kill();
+    holder2.kill();
     old.stop(true);
   }
 }, 15000);
