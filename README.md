@@ -63,7 +63,7 @@ Suggested nodes have a dashed border: click to adopt, ✕ to reject. Nodes adopt
 A map is a directory:
 
 - `eda.json` — the source of truth, written only by `eda serve`
-- `map.md` — nested-bullet export with each node's URLs as links (opens in Markmap / Obsidian). eda rewrites it at start and on every save (a chat line or an AI suggestion is a save too) and never reads it, so edits you make here are overwritten without notice. Upgrading from a version that read map.md back: hand edits made while eda was stopped are overwritten at the next start, not offered. A directory with a `map.md` but no `eda.json` is refused at start.
+- `map.md` — nested-bullet export with each node's URLs as links and its note as a quote (opens in Markmap / Obsidian). eda rewrites it at start and on every save (a chat line or an AI suggestion is a save too) and never reads it, so edits you make here are overwritten without notice. Upgrading from a version that read map.md back: hand edits made while eda was stopped are overwritten at the next start, not offered. A directory with a `map.md` but no `eda.json` is refused at start.
 
 ## Config
 

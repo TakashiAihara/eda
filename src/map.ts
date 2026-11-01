@@ -425,14 +425,16 @@ export function say(doc: MapDoc, from: 'human' | 'ai', text: string, nodeId?: st
 /**
  * `# root`, then two-space nested bullets: the shape Markmap and Obsidian open as-is. A node's URLs
  * follow its text as links (#35), in `<>` so a parenthesis needs no escape a viewer could pass on
- * to the browser; `new URL` has already encoded any `<` or `>`.
+ * to the browser; `new URL` has already encoded any `<` or `>`. Its note follows as a quote, which
+ * Markmap draws inside the node and not as a child; a root's note it does not draw at all.
  */
 export function toMarkdown(root: Node): string {
   const line = (n: Node): string => [n.text, ...n.urls.map((u) => `[link](<${u.url}>)`)].join(' ');
-  const lines = [`# ${line(root)}`, ''];
+  const quote = (n: Node, indent: string): string[] => (n.note ? n.note.split('\n').map((l) => `${indent}> ${l}`.trimEnd()) : []);
+  const lines = [`# ${line(root)}`, '', ...quote(root, ''), ...(root.note ? [''] : [])];
   const walk = (n: Node, depth: number): void => {
     for (const c of n.children) {
-      lines.push(`${'  '.repeat(depth)}- ${line(c)}`);
+      lines.push(`${'  '.repeat(depth)}- ${line(c)}`, ...quote(c, '  '.repeat(depth + 1)));
       walk(c, depth + 1);
     }
   };

@@ -139,6 +139,17 @@ test("map.md puts a node's URLs after its text as links that survive parentheses
   );
 });
 
+test("map.md puts a node's note under its line as a quote, at that node's depth, every line of it", () => {
+  const d = newMap('plan');
+  editNode(d, 'n1', { note: 'root note' });
+  const a = addChild(d, 'n1', 'a');
+  editNode(d, a.id, { note: 'first\n\n- third' });
+  const a1 = addChild(d, a.id, 'a1');
+  editNode(d, a1.id, { note: 'deep' });
+  addChild(d, 'n1', 'b');
+  expect(toMarkdown(d.root)).toBe('# plan\n\n> root note\n\n- a\n  > first\n  >\n  > - third\n  - a1\n    > deep\n- b\n');
+});
+
 test('map.md is the tree as nested bullets under the root heading', () => {
   const d = newMap('plan');
   const a = addChild(d, 'n1', 'a');
