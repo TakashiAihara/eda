@@ -435,20 +435,25 @@ test('eda mcp pushes the person\'s chat into the session as a channel event', as
   }
 }, 15000);
 
-test('eda mcp names a map that does not take its calls once on stderr, however many passes go by', async () => {
+test('eda mcp names a map that does not take its calls once while it stays so, and again only after it has answered', async () => {
   const { Client: McpClient } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const { registerInstance } = await import('../src/store.ts');
-  // As an eda serve from before the AI got its own token answers /api/ai/rev.
-  // Until `back` is set; then as a map that is up again, until it is unset.
-  let back = false;
-  const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => (back ? Response.json({ rev: 1, sessions: [] }) : new Response('not found', { status: 404 })) });
-  // A live pid for its record that is not this process's, which holds the record of the map above.
-  const holder = Bun.spawn(['sleep', '30']);
-  const holder2 = Bun.spawn(['sleep', '30']);
-  const unregister = registerInstance({ pid: holder.pid, dir: '/old-map', host: '127.0.0.1', port: old.port!, session: 'S1', startedAt: '' });
-  // A second one, so "once" is per map and not once for all of them.
-  const unregister2 = registerInstance({ pid: holder2.pid, dir: '/old-map-2', host: '127.0.0.1', port: old.port!, session: 'S1', startedAt: '' });
+  // Each answers /api/ai/rev as a pre-split eda serve does (a plain 404), or as a map that is up
+  // again, or not at all until eda mcp's 5 s timeout.
+  type Mode = 'stale' | 'back' | 'hang';
+  const stub = (mode: () => Mode) =>
+    Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => (mode() === 'back' ? Response.json({ rev: 1, sessions: [] }) : mode() === 'hang' ? new Promise<Response>(() => {}) : new Response('not found', { status: 404 })) });
+  let modeA: Mode = 'stale';
+  let modeB: Mode = 'stale';
+  const a = stub(() => modeA);
+  const b = stub(() => modeB);
+  // Live pids for their records that are not this process's, which holds the record of the test map.
+  const holders = [Bun.spawn(['sleep', '120']), Bun.spawn(['sleep', '120'])];
+  const unregisters = [
+    registerInstance({ pid: holders[0]!.pid, dir: '/old-map-a', host: '127.0.0.1', port: a.port!, session: 'S1', startedAt: '' }),
+    registerInstance({ pid: holders[1]!.pid, dir: '/old-map-b', host: '127.0.0.1', port: b.port!, session: 'S1', startedAt: '' }),
+  ];
   const transport = new StdioClientTransport({
     command: 'bun',
     args: [join(import.meta.dir, '../src/cli.ts'), 'mcp'],
@@ -456,31 +461,36 @@ test('eda mcp names a map that does not take its calls once on stderr, however m
     stderr: 'pipe',
   });
   let err = '';
-  transport.stderr?.on('data', (b: Buffer) => (err += b.toString()));
+  transport.stderr?.on('data', (x: Buffer) => (err += x.toString()));
+  const named = (d: string) => err.split('\n').filter((l) => l.startsWith(`eda: the map at ${d} does not take`)).length;
+  const waitFor = async (ok: () => boolean, ms: number) => {
+    for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await Bun.sleep(100);
+  };
   const c = new McpClient({ name: 't', version: '0' });
   try {
     await c.connect(transport);
-    // Passes at 0, 2, 4 and 6 s.
-    await Bun.sleep(6500);
-    const hint = 'An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.';
-    const line = (d: string) => `eda: the map at ${d} does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${hint}`;
-    const lines = () => err.split('\n').filter((l) => l.includes('/old-map')).sort();
-    expect(lines()).toEqual([line('/old-map'), line('/old-map-2')]);
-    // Up again for a couple of passes, then stale again: named once more, each.
-    back = true;
+    await waitFor(() => named('/old-map-a') > 0 && named('/old-map-b') > 0, 10_000);
+    // Several passes stale: still once each.
     await Bun.sleep(4500);
-    back = false;
-    await Bun.sleep(4500);
-    expect(lines()).toEqual([line('/old-map'), line('/old-map'), line('/old-map-2'), line('/old-map-2')]);
+    expect([named('/old-map-a'), named('/old-map-b')]).toEqual([1, 1]);
+    expect(err).toContain(`eda: the map at /old-map-a does not take this session's calls; if it is one of this session's, its chat does not reach the session. An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.`);
+    // a answers again; b only stops answering. Then both are stale again: a is named again, b not.
+    modeA = 'back';
+    modeB = 'hang';
+    await Bun.sleep(8000);
+    modeA = 'stale';
+    modeB = 'stale';
+    await waitFor(() => named('/old-map-a') > 1, 15_000);
+    await Bun.sleep(3000);
+    expect([named('/old-map-a'), named('/old-map-b')]).toEqual([2, 1]);
   } finally {
     await c.close();
-    unregister();
-    unregister2();
-    holder.kill();
-    holder2.kill();
-    old.stop(true);
+    for (const u of unregisters) u();
+    for (const h of holders) h.kill();
+    a.stop(true);
+    b.stop(true);
   }
-}, 25000);
+}, 60_000);
 
 test('a session whose cwd is not ASCII can reach its map', async () => {
   const jp = new Client('S7', '/tmp/日本語', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
