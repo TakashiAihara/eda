@@ -1,14 +1,19 @@
 #!/usr/bin/env bun
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
+import { resolve } from 'node:path';
+import { mapFromOutline } from './map.ts';
 import { parseArgs } from 'node:util';
 import { runMcp } from './mcp.ts';
 import { MapError } from './map.ts';
 import { startServer } from './server.ts';
-import { absDir, lockMap, readInstances, registerInstance, token } from './store.ts';
+import { absDir, lockMap, readInstances, registerInstance, saveMap, token } from './store.ts';
+import { readXmind } from './xmind.ts';
 
 const USAGE = `eda — a mind map you grow one node at a time with an AI that can only suggest
 
   eda serve <dir> [--title <t>] [--host 0.0.0.0] [--port 0]   start the map in <dir> (created if missing)
+  eda import <file.xmind> <dir> [--sheet <n>]                 make a new map in <dir> from an XMind file
   eda list                                                    running maps
   eda mcp                                                     MCP server + channel, spawned by Claude Code
   eda token                                                   the token the browser asks for`;
@@ -79,6 +84,38 @@ async function main(argv: string[]): Promise<number> {
       const host = values.host === '0.0.0.0' ? lanIp() : values.host;
       console.log(JSON.stringify({ url: `http://${host}:${server.port}/#t=${token()}`, dir, port: server.port, pid: process.pid }));
       return await new Promise<number>(() => {});
+    }
+    case 'import': {
+      const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { sheet: { type: 'string', default: '1' } } });
+      if (positionals.length !== 2) {
+        console.error(USAGE);
+        return 2;
+      }
+      const dir = resolve(positionals[1]!);
+      try {
+        // Only into an empty or new directory: an eda.json or a hand-written map.md there is the person's.
+        if (existsSync(dir) && readdirSync(dir).length > 0) {
+          console.error(`eda: ${dir} is not empty; import into a new directory`);
+          return 1;
+        }
+        const sheets = readXmind(readFileSync(positionals[0]!));
+        const n = Number(values.sheet);
+        const sheet = sheets[n - 1];
+        if (!sheet) {
+          console.error(`eda: no sheet ${values.sheet}; the file has ${sheets.length}: ${sheets.map((s, i) => `${i + 1} ${s.title.replace(/\s+/g, ' ')}`).join(', ')}`);
+          return 1;
+        }
+        const doc = mapFromOutline(sheet.root);
+        mkdirSync(dir, { recursive: true });
+        saveMap(dir, doc);
+        console.log(`imported sheet ${n} "${sheet.title}" into ${dir}; start it with: eda serve ${dir}`);
+        const left = Object.entries(sheet.dropped).map(([kind, k]) => `${k} ${kind}`);
+        if (left.length > 0) console.log(`left behind (eda does not take them): ${left.join(', ')}`);
+        return 0;
+      } catch (err) {
+        console.error(`eda: ${err instanceof Error ? err.message : String(err)}`);
+        return 1;
+      }
     }
     case 'list':
       for (const i of readInstances()) console.log(`${i.pid}\t${i.port}\t${i.session ?? '-'}\t${i.dir}`);
