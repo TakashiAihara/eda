@@ -2,6 +2,7 @@
 import { networkInterfaces } from 'node:os';
 import { parseArgs } from 'node:util';
 import { runMcp } from './mcp.ts';
+import { MapError } from './map.ts';
 import { startServer } from './server.ts';
 import { absDir, lockMap, readInstances, registerInstance, token } from './store.ts';
 
@@ -42,14 +43,23 @@ async function main(argv: string[]): Promise<number> {
         return 1;
       }
       const session = process.env['CLAUDE_CODE_SESSION_ID'] || undefined;
-      const { server, stop: stopServer } = startServer({
-        dir,
-        host: values.host!,
-        port: Number(values.port),
-        ...(values.title === undefined ? {} : { title: values.title }),
-        ...(session === undefined ? {} : { session }),
-        cwd: process.cwd(),
-      });
+      let started: ReturnType<typeof startServer>;
+      try {
+        started = startServer({
+          dir,
+          host: values.host!,
+          port: Number(values.port),
+          ...(values.title === undefined ? {} : { title: values.title }),
+          ...(session === undefined ? {} : { session }),
+          cwd: process.cwd(),
+        });
+      } catch (err) {
+        release();
+        if (!(err instanceof MapError)) throw err;
+        console.error(`eda: ${err.message}`);
+        return 1;
+      }
+      const { server, stop: stopServer } = started;
       const unregister = registerInstance({
         pid: process.pid,
         dir,

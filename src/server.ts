@@ -28,7 +28,7 @@ import {
   taskDescription,
   toOutlineForAi,
 } from './map.ts';
-import { config, openMap, saveMap, syncMarkdown, token } from './store.ts';
+import { config, openMap, saveMap, token } from './store.ts';
 
 export type ServeOptions = { dir: string; host: string; port: number; title?: string; session?: string; cwd?: string; kaneoPollMs?: number; keyCommandMs?: number };
 
@@ -102,8 +102,6 @@ export function startServer(opts: ServeOptions) {
    * Record a Claude Code session on the map. Only on start and on an explicit attach:
    * the MCP server also asks every running map "are you mine?", and recording on that
    * question would make every map everyone's.
-   *
-   * Called after `syncMarkdown`, since saving first would overwrite a pending hand edit.
    */
   const remember = (id: string | null, cwd: string | null): void => {
     if (!id || doc.sessions.some((s) => s.id === id)) return;
@@ -111,18 +109,16 @@ export function startServer(opts: ServeOptions) {
     saveMap(opts.dir, doc);
     rev += 1;
   };
-  syncMarkdown(opts.dir, doc, true);
   remember(opts.session ?? null, opts.cwd ?? null);
+  // Saved once at start too (eda.json as is, map.md from it): a map.md deleted, or left behind by a
+  // save cut short between the two files, would otherwise stay wrong until the first change.
+  saveMap(opts.dir, doc);
 
   /** null, arrays and scalars are valid JSON but not a record; read them as empty, so field reads give 400s rather than TypeErrors. */
   const rec = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
   const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
   const strs = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined);
-  // Bodies are read before the map.md check, so no edit can land between the check and
-  // the change (see `api`). Handlers get the same object back.
-  const bodies = new WeakMap<Request, Record<string, unknown>>();
-  const body = async (req: Request): Promise<Record<string, unknown>> => bodies.get(req) ?? readBody(req);
-  const readBody = async (req: Request): Promise<Record<string, unknown>> => {
+  const body = async (req: Request): Promise<Record<string, unknown>> => {
     try {
       return rec(await req.json());
     } catch {
@@ -130,22 +126,15 @@ export function startServer(opts: ServeOptions) {
     }
   };
 
-  /** Wrap a handler: auth, the md check, save on success, errors as JSON. */
+  /** Wrap a handler: auth, save on success, errors as JSON. */
   const api =
     (write: boolean, h: Handler) =>
     async (req: Request & { params?: Record<string, string> }): Promise<Response> => {
       if (req.headers.get('authorization') !== `Bearer ${secret}`) return Response.json({ error: 'unauthorized' }, { status: 401 });
       try {
-        if (write) bodies.set(req, await readBody(req));
-        // The map.md seen now is the one the change is applied against; a route that awaits
-        // the network gets a second check before the save.
-        if (syncMarkdown(opts.dir, doc)) rev += 1;
         if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), decodeURIComponent(req.headers.get('x-eda-cwd') ?? ''));
         const result = await h(req, doc, req.params ?? {});
         if (write) {
-          // Checked again: the kaneo routes wait on the network and on a command, and a map.md
-          // edit saved meanwhile would otherwise be exported over instead of offered.
-          if (syncMarkdown(opts.dir, doc)) rev += 1;
           saveMap(opts.dir, doc);
           rev += 1;
         }

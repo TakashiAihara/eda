@@ -2,15 +2,15 @@
  * Where a map and eda's own state live on disk.
  *
  * A map is one directory: `eda.json` is the source of truth and only the server writes
- * it; `map.md` is an export for people and other tools. Anything written to map.md by
- * someone else is never applied — it comes back as candidates (see `syncMarkdown`).
+ * it; `map.md` is an export for people and other tools, rewritten at start and on every save and never read
+ * back: the map is changed only through the UI (judgment queue D-02, #5).
  */
 
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { addCandidates, diffOutline, type MapDoc, newMap, parseMarkdown, toMarkdown } from './map.ts';
+import { MapError, type MapDoc, newMap, toMarkdown } from './map.ts';
 
 export const JSON_FILE = 'eda.json';
 export const MD_FILE = 'map.md';
@@ -25,67 +25,28 @@ function writeAtomic(path: string, body: string, mode?: number): void {
   renameSync(tmp, path);
 }
 
-const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
-
 export function loadMap(dir: string): MapDoc | undefined {
   const p = join(dir, JSON_FILE);
   return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf8')) as MapDoc) : undefined;
 }
 
 export function saveMap(dir: string, doc: MapDoc): void {
-  const md = toMarkdown(doc.root);
-  const next = sha(md);
-  if (next !== doc.mdHash) doc.prevMdHash = doc.mdHash;
-  doc.mdHash = next;
-  // eda.json first, bracketed by a marker: if the process dies in between, the marker is
-  // what tells the next start that a map.md equal to the previous export is a save cut
-  // short, not a person's undo made while eda was stopped.
-  const marker = join(dir, EXPORTING);
-  writeFileSync(marker, '');
   writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(doc, null, 2)}\n`);
-  writeAtomic(join(dir, MD_FILE), md);
-  unlinkSync(marker);
+  writeAtomic(join(dir, MD_FILE), toMarkdown(doc.root));
 }
-
-const EXPORTING = '.eda-exporting';
 
 export function openMap(dir: string, title?: string): MapDoc {
   mkdirSync(dir, { recursive: true });
   const doc = loadMap(dir);
   if (doc) return doc;
+  // A map.md that is not eda's export: writing the new map would replace a person's file, and
+  // nothing reads it in, so starting here is refused rather than overwriting it.
+  if (existsSync(join(dir, MD_FILE))) throw new MapError(`${join(dir, MD_FILE)} exists but ${JSON_FILE} does not; move map.md away or pick another directory`);
   const fresh = newMap(title ?? 'untitled');
-  if (existsSync(join(dir, MD_FILE))) {
-    // A map.md written before eda ever ran here: keep it for syncMarkdown to turn into
-    // candidates, instead of exporting the empty map over it.
-    writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(fresh, null, 2)}\n`);
-    return fresh;
-  }
   saveMap(dir, fresh);
   return fresh;
 }
 
-/**
- * If map.md is not what eda last wrote, offer the difference as candidates and put the
- * file back. Returns whether anything changed.
- *
- * Putting it back is what makes the candidates the only way in: a map.md left as the
- * editor saved it would look adopted to whoever opens it next.
- */
-/**
- * `recovering`: only on the first check after the server starts may map.md matching the
- * previous export be read as a save cut short. Later, the same content is a person
- * undoing a change, and is offered like any other edit.
- */
-export function syncMarkdown(dir: string, doc: MapDoc, recovering = false): boolean {
-  const p = join(dir, MD_FILE);
-  const md = existsSync(p) ? readFileSync(p, 'utf8') : '';
-  const h = sha(md);
-  if (h === doc.mdHash) return false;
-  const cutShort = recovering && h === doc.prevMdHash && existsSync(join(dir, EXPORTING));
-  if (md !== '' && !cutShort) addCandidates(doc, diffOutline(doc, parseMarkdown(md)));
-  saveMap(dir, doc);
-  return true;
-}
 
 /** One token per host, shared by the browser and the MCP server. Same model as akapen. */
 export function token(): string {
