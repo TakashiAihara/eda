@@ -69,13 +69,14 @@ A map is a directory:
 
 - `~/.config/eda/config.json`: `{ "kaneo": { "host": "https://kaneo.example", "workspace": "<workspace id>" }, "spawn": { "command": ["spawn-task", "{number}", "--project", "{project}", "--repo", "{repo}"] } }` — `host` enables task links (`EDA_KANEO_HOST` overrides it), `workspace` is where the project picker looks, `keyCommand` (optional) is an argv that prints the kaneo API key, and `spawn.command` is the argv 「session に依頼」 runs with `{number} {project} {repo} {workspace} {task}` filled in; no command, no button. Reading a task's status is a `GET` on the task, so the status on the node needs the host and the key only; 「タスクにする」 and the project picker also need `workspace`.
 - `KANEO_API_KEY`: the kaneo API key. When it is not set (or empty), eda runs `kaneo.keyCommand` once at start (no shell; the command itself is killed after 15 s, children it leaves are not) and uses the single line it prints, e.g. `"keyCommand": ["secret-tool", "lookup", "service", "kaneo"]`; the command's own stderr is not shown. With neither, the create / dispatch / status features are off and the browser shows only the URL link; when the command fails they are off too, and eda's stderr says why in one line. The dispatched command inherits `eda serve`'s environment, so a key read through `keyCommand` is not in it: a command that needs the key fetches it itself (`spawn-task` does).
-- `EDA_HOME` (default `~/.eda`): token and running-instance registry.
+- `EDA_HOME` (default `~/.eda`): the two tokens and the running-instance registry.
 
 ## Security
 
-- One token per host (`$EDA_HOME/token`), shared by every map on that host and by the MCP server. Anyone holding a map URL can open every map running on that host, and act as the AI side too.
+- Two tokens per host, each shared by every map on that host. `$EDA_HOME/token` is the person's (the browser's): it opens every route except `/api/ai/*`. `$EDA_HOME/ai-token` is the MCP server's: it opens only `/api/ai/*` (read the map, suggest, reply). Anyone holding a map URL can open every map running on that host.
+- The split keeps an AI that uses only its MCP tools from adopting, deleting or editing. It does not stop a session with a shell under the same OS user: it can read `$EDA_HOME/token`, and it sees the URL `eda serve` prints when it starts the map.
 - `eda serve` binds `0.0.0.0` and speaks plain HTTP: the map is reachable from the whole LAN, and the token travels unencrypted. Pass `--host 127.0.0.1` to keep it local, and do not expose the port to the internet.
-- To revoke the token, stop the running maps, delete `$EDA_HOME/token`, and start them again; a new one is created.
+- To revoke a token, stop the running maps, delete `$EDA_HOME/token` or `$EDA_HOME/ai-token`, and start them again; a new one is created. Restart the Claude Code sessions too after deleting `ai-token`.
 
 ## Contributing
 
