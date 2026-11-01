@@ -84,8 +84,11 @@ export class Client {
     return (await this.scan(dir)).mine;
   }
 
-  /** `targets()`, and the running maps that turned this session's calls down (`StaleServer`). */
-  private async scan(dir?: string): Promise<{ mine: Target[]; stale: string[] }> {
+  /**
+   * `targets()`, the running maps that turned this session's calls down (`StaleServer`), and the
+   * ones that answered at all (this session's or not), which a map that timed out is not.
+   */
+  async scan(dir?: string): Promise<{ mine: Target[]; stale: string[]; answered: string[] }> {
     const running = this.instances().flatMap((i) => {
       const base = localBase(i.host, i.port);
       return base === undefined ? [] : [{ dir: i.dir, base }];
@@ -95,21 +98,23 @@ export class Client {
       // `eda serve` recorded it.
       const abs = resolve(this.cwd, dir);
       const want = existsSync(abs) ? realpathSync(abs) : abs;
-      return { mine: running.filter((r) => r.dir === want).map((r) => ({ ...r, attach: true })), stale: [] };
+      return { mine: running.filter((r) => r.dir === want).map((r) => ({ ...r, attach: true })), stale: [], answered: [] };
     }
     const mine: Target[] = [];
     const stale: string[] = [];
+    const answered: string[] = [];
     for (const r of running) {
       try {
         // /api/ai/rev, not /api/ai/state: this runs for every running map on every channel pass.
         const s = (await this.call(r, '/api/ai/rev')) as { sessions: string[] };
+        answered.push(r.dir);
         if (s.sessions.includes(this.session)) mine.push(r);
       } catch (err) {
         // Anything else is a server going down between the listing and the call.
         if (err instanceof StaleServer) stale.push(r.dir);
       }
     }
-    return { mine, stale };
+    return { mine, stale, answered };
   }
 
   async one(dir?: string): Promise<Target> {
@@ -272,9 +277,20 @@ export async function runMcp(): Promise<void> {
     await client.call(t, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: `c${pos}` }) });
     acked.set(t.dir, pos);
   };
+  // Maps named as not taking this session's calls, said once while they stay so: one that comes
+  // back and later goes stale again is named again.
+  let named = new Set<string>();
   for (;;) {
     try {
-      for (const t of await client.targets()) {
+      const { mine, stale, answered } = await client.scan();
+      // Otherwise the person's lines in such a map never arrive, and nothing says why.
+      for (const d of stale) {
+        // Every running map on the host is looked at, so this one may not be this session's at all.
+        if (!named.has(d)) console.error(`eda: the map at ${d} does not take this session's calls; if it is one of this session's, its chat does not reach the session. ${STALE_HINT}`);
+      }
+      // Forgotten only once it answers again: a pass where it timed out says nothing either way.
+      named = new Set([...named, ...stale].filter((d) => !answered.includes(d)));
+      for (const t of mine) {
         try {
           // A recorded position that failed to save is retried every pass until it sticks;
           // otherwise a restart would replay what was already delivered.
