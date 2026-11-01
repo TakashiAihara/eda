@@ -9,7 +9,7 @@ Status: implemented (issue #30).
 
 ## Decision
 
-- `eda import <file.xmind> <dir> [--sheet <n>]` writes a new map into a directory that holds none; it never touches a running or existing map.
+- `eda import <file.xmind> <dir> [--sheet <n>]` writes a new map into a new or empty directory; it never touches a running or existing map, nor a hand-written map.md waiting to become one.
 - Every imported node's origin is the person: they wrote it, in XMind.
 - What comes over is each topic's title (flattened to one line, as every eda node is) and its attached subtopics.
 
@@ -18,10 +18,13 @@ Status: implemented (issue #30).
 | sheet | one map; `--sheet` picks it, default 1 |
 | title | `text` |
 | attached subtopics | children |
-| notes, links, markers, folded state, labels, images | dropped |
-| floating (detached) topics, relationships, boundaries, summaries | dropped |
+| notes, links, markers, labels, images | dropped, counted |
+| floating (detached) and other non-attached topics, relationships | dropped, counted |
+| folded state, boundaries, summaries, styles | dropped |
+| a topic with no title (an image-only topic) | the import stops and names the parent |
 
-- Notes, links, markers and folded state have eda fields, but the person's two files have none of them, so they are not mapped yet. Map them when a file that uses them turns up.
+- Notes, links, markers and folded state have eda fields, but the person's two files have none of them, so they are not mapped yet. The import prints what it left behind, so a file that uses them shows it, and that is when to map them.
+- An empty title stops the import instead of becoming a placeholder: eda nodes cannot be empty, and a made-up text would read as the person's.
 
 ## Other options
 

@@ -26,7 +26,7 @@ eda list                                     # running maps
 eda import plan.xmind ~/maps/plan [--sheet 2]  # a new map from an XMind file, then eda serve it
 ```
 
-`eda import` reads XMind 2020 and later (`content.json`) and XMind 8 (`content.xml`). It takes each topic's text and its attached subtopics; notes, links, markers, floating topics and relationships are left behind. It only creates a map: a directory that already holds one is refused.
+`eda import` reads XMind 2020 and later (`content.json`) and XMind 8 (`content.xml`). It takes each topic's text and its attached subtopics; notes, links, markers, labels, images, floating topics and relationships are left behind, and it prints how many of each. It only creates a map: a directory that is not empty is refused, and a topic with no title stops the import.
 
 Register the MCP server with Claude Code (user scope) and start Claude Code with the channel loaded:
 

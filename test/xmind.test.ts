@@ -1,13 +1,16 @@
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { mapFromOutline } from '../src/map.ts';
 import { readXmind, unzip } from '../src/xmind.ts';
 
-/** A zip with each file stored or deflated, the two methods XMind writes. */
-function zip(files: Record<string, string>, deflate = false): Uint8Array {
+/**
+ * A zip with each file stored or deflated, the two methods XMind writes.
+ * `descriptor`: sizes only in the central directory, as XMind 8 writes them (flag 0x08).
+ */
+function zip(files: Record<string, string>, deflate = false, descriptor = false): Uint8Array {
   const parts: Uint8Array[] = [];
   const dir: Uint8Array[] = [];
   let at = 0;
@@ -17,12 +20,14 @@ function zip(files: Record<string, string>, deflate = false): Uint8Array {
     const data = deflate ? new Uint8Array(deflateRawSync(raw)) : raw;
     const local = new DataView(new ArrayBuffer(30));
     local.setUint32(0, 0x04034b50, true);
+    local.setUint16(6, descriptor ? 0x08 : 0, true);
     local.setUint16(8, deflate ? 8 : 0, true);
-    local.setUint32(18, data.length, true);
-    local.setUint32(22, raw.length, true);
+    local.setUint32(18, descriptor ? 0 : data.length, true);
+    local.setUint32(22, descriptor ? 0 : raw.length, true);
     local.setUint16(26, n.length, true);
     const central = new DataView(new ArrayBuffer(46));
     central.setUint32(0, 0x02014b50, true);
+    central.setUint16(8, descriptor ? 0x08 : 0, true);
     central.setUint16(10, deflate ? 8 : 0, true);
     central.setUint32(20, data.length, true);
     central.setUint32(24, raw.length, true);
@@ -47,17 +52,27 @@ const contentJson = JSON.stringify([
     rootTopic: {
       title: 'trip',
       children: {
-        attached: [{ title: 'hotel', children: { attached: [{ title: 'near\nthe station' }] } }, { title: 'budget' }],
+        attached: [
+          {
+            title: 'hotel',
+            notes: { plain: { content: 'ask for a quiet room' } },
+            href: 'https://example.com/hotel',
+            markers: [{ markerId: 'priority-1' }, { markerId: 'flag-red' }],
+            children: { attached: [{ title: 'near\nthe station' }] },
+          },
+          { title: 'budget' },
+        ],
         detached: [{ title: 'floating note' }],
       },
     },
+    relationships: [{ end1Id: 'a', end2Id: 'b' }],
   },
   { title: 'Sheet B', rootTopic: { title: 'other' } },
 ]);
 
-const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="no"?><xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" xmlns:xlink="http://www.w3.org/1999/xlink" version="2.0"><sheet id="s1"><topic id="t1" structure-class="org.xmind.ui.map.unbalanced"><title>Q&amp;A &lt;draft&gt;</title><children><topics type="attached"><topic id="t2"><title>first</title><marker-refs><marker-ref marker-id="priority-1"/></marker-refs><children><topics type="attached"><topic id="t3"><title>deep</title></topic></topics></children></topic><topic id="t4"><title>second</title></topic></topics><topics type="detached"><topic id="t5"><title>floating</title></topic></topics></children></topic><title>Sheet 1</title></sheet></xmap-content>`;
+const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="no"?><xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" xmlns:xlink="http://www.w3.org/1999/xlink" version="2.0"><sheet id="s1"><topic id="t1" structure-class="org.xmind.ui.map.unbalanced"><title>Q&amp;A &lt;draft&gt;</title><children><topics type="attached"><topic id="t2" xlink:href="https://example.com/"><title>first</title><marker-refs><marker-ref marker-id="priority-1"/></marker-refs><notes><plain>a note</plain></notes><children><topics type="attached"><topic id="t3"><title>line&#10;two &#x263A; &#99999999;</title></topic></topics></children></topic><topic id="t4"><title>second</title></topic></topics><topics type="detached"><topic id="t5"><title>floating</title></topic></topics></children></topic><title>Sheet 1</title></sheet></xmap-content>`;
 
-test('content.json: sheets, nesting and only attached children', () => {
+test('content.json: sheets, nesting, only attached children, and a count of what is left behind', () => {
   const sheets = readXmind(zip({ 'content.json': contentJson }));
   expect(sheets.map((s) => s.title)).toEqual(['Sheet A', 'Sheet B']);
   expect(sheets[0]!.root).toEqual({
@@ -67,19 +82,27 @@ test('content.json: sheets, nesting and only attached children', () => {
       { text: 'budget', children: [] },
     ],
   });
+  expect(sheets[0]!.dropped).toEqual({ notes: 1, links: 1, markers: 2, 'detached topics': 1, relationships: 1 });
+  expect(sheets[1]!.dropped).toEqual({});
 });
 
-test('content.xml (XMind 8): entities decoded, markers and detached topics dropped, sheet title found after the topic', () => {
-  const [sheet, ...rest] = readXmind(zip({ 'content.xml': contentXml }, true));
+test('content.xml (XMind 8): references decoded, a self-closing marker does not swallow its siblings, sheet title after the topic', () => {
+  const [sheet, ...rest] = readXmind(zip({ 'content.xml': contentXml }, true, true));
   expect(rest).toHaveLength(0);
   expect(sheet!.title).toBe('Sheet 1');
   expect(sheet!.root).toEqual({
     text: 'Q&A <draft>',
     children: [
-      { text: 'first', children: [{ text: 'deep', children: [] }] },
+      { text: 'first', children: [{ text: 'line\ntwo ☺ &#99999999;', children: [] }] },
       { text: 'second', children: [] },
     ],
   });
+  expect(sheet!.dropped).toEqual({ notes: 1, links: 1, markers: 1, 'detached topics': 1 });
+});
+
+test('a stray closing tag in content.xml does not break the rest', () => {
+  const xml = '<xmap-content><sheet><topic><title>r</title></topic></topic></sheet></sheet></xmap-content></xmap-content><x/>';
+  expect(readXmind(zip({ 'content.xml': xml }))[0]!.root).toEqual({ text: 'r', children: [] });
 });
 
 test('content.json wins over the stub content.xml that XMind 2020 also writes', () => {
@@ -88,29 +111,47 @@ test('content.json wins over the stub content.xml that XMind 2020 also writes', 
   expect(sheet!.root.text).toBe('trip');
 });
 
-test('stored and deflated entries read the same', () => {
-  const files = { 'a.txt': 'hello ありがとう', 'b/c.txt': 'x'.repeat(5000) };
-  for (const deflate of [false, true]) {
-    const got = unzip(zip(files, deflate));
+test('stored, deflated and data-descriptor entries read the same; unnamed files are skipped', () => {
+  const long = 'abc'.repeat(2000);
+  const files = { 'a.txt': 'hello ありがとう', 'b/c.txt': long, 'Thumbnails/t.png': 'not wanted' };
+  for (const [deflate, descriptor] of [[false, false], [true, false], [true, true]] as const) {
+    const got = unzip(zip(files, deflate, descriptor), ['a.txt', 'b/c.txt']);
     expect([...got.keys()]).toEqual(['a.txt', 'b/c.txt']);
     expect(new TextDecoder().decode(got.get('a.txt'))).toBe('hello ありがとう');
-    expect(got.get('b/c.txt')!.length).toBe(5000);
+    expect(new TextDecoder().decode(got.get('b/c.txt'))).toBe(long);
   }
 });
 
-test('a file that is not a zip, or a zip without content, is refused', () => {
-  expect(() => readXmind(new TextEncoder().encode('# not a zip'))).toThrow(/not a zip file/);
+test('a file that is not a zip, a cut-off zip, or a zip without content is refused with a MapError', () => {
+  expect(() => readXmind(new TextEncoder().encode('# not a zip'))).toThrow(/^not a zip file/);
   expect(() => readXmind(zip({ 'manifest.json': '{}' }))).toThrow(/no content.json or content.xml/);
+  // Point the directory past the data: a truncated or tampered file.
+  const cut = new Uint8Array(zip({ 'content.json': contentJson }));
+  new DataView(cut.buffer).setUint32(cut.length - 22 + 16, cut.length, true);
+  expect(() => readXmind(cut)).toThrow(/broken zip/);
+  // An entry whose size runs past the end of the file.
+  const long = new Uint8Array(zip({ 'content.json': contentJson }));
+  const dirAt = new DataView(long.buffer).getUint32(long.length - 22 + 16, true);
+  new DataView(long.buffer).setUint32(dirAt + 20, long.length * 2, true);
+  expect(() => readXmind(long)).toThrow('broken zip: content.json runs past the end of the file');
+});
+
+test('a topic with no title stops the import and names its parent', () => {
+  const noTitle = JSON.stringify([{ title: 'S', rootTopic: { title: 'trip', children: { attached: [{ title: '  ' }] } } }]);
+  expect(() => readXmind(zip({ 'content.json': noTitle }))).toThrow('a topic has no title (under "trip")');
+  const xml = '<xmap-content><sheet><topic><title>root</title><children><topics type="attached"><topic></topic></topics></children></topic></sheet></xmap-content>';
+  expect(() => readXmind(zip({ 'content.xml': xml }))).toThrow('a topic has no title (under "root")');
 });
 
 test('an imported outline becomes a map of the person, text on one line', () => {
   const doc = mapFromOutline(readXmind(zip({ 'content.json': contentJson }))[0]!.root);
   expect(doc.root.text).toBe('trip');
-  const hotel = doc.root.children[0]!;
-  expect(hotel.children[0]!.text).toBe('near the station');
+  const [hotel, budget] = doc.root.children;
+  const station = hotel!.children[0]!;
+  expect(station.text).toBe('near the station');
   expect(doc.root.children.map((c) => c.text)).toEqual(['hotel', 'budget']);
-  expect([doc.root, hotel, hotel.children[0]!].every((n) => n.origin.by === 'human')).toBe(true);
-  expect(new Set([doc.root.id, hotel.id, hotel.children[0]!.id, doc.root.children[1]!.id]).size).toBe(4);
+  expect([doc.root, hotel!, station, budget!].map((n) => n.origin.by)).toEqual(['human', 'human', 'human', 'human']);
+  expect(new Set([doc.root.id, hotel!.id, station.id, budget!.id]).size).toBe(4);
   expect(doc.suggestions).toHaveLength(0);
 });
 
@@ -119,32 +160,62 @@ afterAll(() => {
   for (const d of made) rmSync(d, { recursive: true, force: true });
 });
 
-async function cli(...args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const p = Bun.spawn(['bun', join(import.meta.dir, '../src/cli.ts'), ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, EDA_HOME: join(made[0]!, 'home') } });
+async function cli(home: string, ...args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const p = Bun.spawn(['bun', join(import.meta.dir, '../src/cli.ts'), ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, EDA_HOME: home } });
   return { code: await p.exited, out: await new Response(p.stdout).text(), err: await new Response(p.stderr).text() };
 }
 
-test('eda import writes a new map, picks a sheet, and never writes over an existing one', async () => {
+test('eda import writes a new map, picks a sheet, says what it left behind, and never writes into a non-empty directory', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'eda-import-'));
   made.push(tmp);
+  const home = join(tmp, 'home');
   const file = join(tmp, 'm.xmind');
   writeFileSync(file, zip({ 'content.json': contentJson }));
 
-  const first = await cli('import', file, join(tmp, 'a'));
+  const first = await cli(home, 'import', file, join(tmp, 'a'));
   expect(first.code).toBe(0);
   expect(readFileSync(join(tmp, 'a', 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n  - near the station\n- budget\n');
+  expect(first.out).toContain('left behind (eda does not take them): 1 detached topics, 1 notes, 1 links, 2 markers, 1 relationships');
 
-  expect((await cli('import', file, join(tmp, 'b'), '--sheet', '2')).code).toBe(0);
+  const second = await cli(home, 'import', file, join(tmp, 'b'), '--sheet', '2');
+  expect(second.code).toBe(0);
   expect(readFileSync(join(tmp, 'b', 'map.md'), 'utf8')).toBe('# other\n\n');
+  expect(second.out).not.toContain('left behind');
 
-  const missing = await cli('import', file, join(tmp, 'c'), '--sheet', '3');
+  const missing = await cli(home, 'import', file, join(tmp, 'c'), '--sheet', '3');
   expect(missing.code).toBe(1);
   expect(missing.err).toContain('no sheet 3; the file has 2: 1 Sheet A, 2 Sheet B');
   expect(existsSync(join(tmp, 'c'))).toBe(false);
 
   const before = readFileSync(join(tmp, 'a', 'eda.json'), 'utf8');
-  const again = await cli('import', file, join(tmp, 'a'), '--sheet', '2');
+  const again = await cli(home, 'import', file, join(tmp, 'a'), '--sheet', '2');
   expect(again.code).toBe(1);
-  expect(again.err).toContain('already holds a map');
+  expect(again.err).toContain('is not empty; import into a new directory');
   expect(readFileSync(join(tmp, 'a', 'eda.json'), 'utf8')).toBe(before);
+
+  // A hand-written map.md with no eda.json yet is the person's too.
+  mkdirSync(join(tmp, 'd'));
+  writeFileSync(join(tmp, 'd', 'map.md'), '# mine\n\n- kept\n');
+  expect((await cli(home, 'import', file, join(tmp, 'd'))).code).toBe(1);
+  expect(readFileSync(join(tmp, 'd', 'map.md'), 'utf8')).toBe('# mine\n\n- kept\n');
+});
+
+test('eda import reports a bad file in one line and leaves no directory behind', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'eda-import-'));
+  made.push(tmp);
+  const home = join(tmp, 'home');
+  const noTitle = join(tmp, 'blank.xmind');
+  writeFileSync(noTitle, zip({ 'content.json': JSON.stringify([{ rootTopic: { title: 'r', children: { attached: [{}] } } }]) }));
+
+  for (const [file, message] of [
+    [join(tmp, 'nope.xmind'), 'no such file'],
+    [noTitle, 'a topic has no title (under "r")'],
+  ] as const) {
+    const r = await cli(home, 'import', file, join(tmp, 'out'));
+    expect(r.code).toBe(1);
+    expect(r.err.toLowerCase()).toContain(message);
+    expect(r.err.trim().split('\n')).toHaveLength(1);
+    expect(r.err.startsWith('eda: ')).toBe(true);
+    expect(existsSync(join(tmp, 'out'))).toBe(false);
+  }
 });
