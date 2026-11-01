@@ -81,7 +81,8 @@ export function findSession(session: string): SessionProcess | undefined {
       const p = { pid, start: j.procStart };
       if (same(p)) return p;
     } catch {
-      /* a file mid-write; the next look decides */
+      // A record that does not parse is skipped. Claude Code writes them through a temp file and a
+      // rename, so a half-written one is not expected; if it happens at start, the map stays up.
     }
   }
   return undefined;
