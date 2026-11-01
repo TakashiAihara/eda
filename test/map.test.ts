@@ -127,16 +127,15 @@ test('removing a node drops suggestions aimed at it', () => {
   expect(() => removeNode(d, 'n1')).toThrow(/root/);
 });
 
-test("map.md puts a node's URLs after its text as links that survive brackets and parentheses", () => {
+test("map.md puts a node's URLs after its text as links that survive parentheses and angle brackets", () => {
   const d = newMap('plan');
   addUrl(d, 'n1', 'https://root.example/');
   const a = addChild(d, 'n1', 'a');
-  addUrl(d, a.id, 'https://x.example/a_(b)');
-  addUrl(d, a.id, 'https://y.example/');
-  a.urls[1]!.title = 'see [1] \\ here';
+  addUrl(d, a.id, 'https://x.example/a_(b');
+  addUrl(d, a.id, 'https://y.example/c>d');
   addChild(d, a.id, 'a1');
   expect(toMarkdown(d.root)).toBe(
-    '# plan [link](https://root.example/)\n\n- a [link](https://x.example/a_\\(b\\)) [see \\[1\\] \\\\ here](https://y.example/)\n  - a1\n',
+    '# plan [link](<https://root.example/>)\n\n- a [link](<https://x.example/a_(b>) [link](<https://y.example/c%3Ed>)\n  - a1\n',
   );
 });
 
