@@ -92,7 +92,7 @@ async function main(argv: string[]): Promise<number> {
         const n = Number(values.sheet);
         const sheet = sheets[n - 1];
         if (!sheet) {
-          console.error(`eda: no sheet ${values.sheet}; the file has ${sheets.length}: ${sheets.map((s, i) => `${i + 1} ${s.title}`).join(', ')}`);
+          console.error(`eda: no sheet ${values.sheet}; the file has ${sheets.length}: ${sheets.map((s, i) => `${i + 1} ${s.title.replace(/\s+/g, ' ')}`).join(', ')}`);
           return 1;
         }
         const doc = mapFromOutline(sheet.root);

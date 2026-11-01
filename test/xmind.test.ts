@@ -138,7 +138,7 @@ test('a file that is not a zip, a cut-off zip, or a zip without content is refus
   expect(() => readXmind(zip({ 'content.json': '[{"rootTopic":{"title":"r","children":{"attached":{}}}}]' }))).toThrow('the subtopics of "r" are not a list');
 });
 
-test('a content file inflating past 64 MiB is refused, one just under is read', () => {
+test('a content file inflating past 64 MiB is refused, one of exactly 64 MiB is read', () => {
   expect(() => unzip(zip({ 'content.json': 'a'.repeat(64 * 1024 * 1024 + 1) }, true), ['content.json'])).toThrow('content.json is larger than 64 MiB');
   expect(unzip(zip({ 'content.json': 'a'.repeat(64 * 1024 * 1024) }, true), ['content.json']).get('content.json')!.length).toBe(64 * 1024 * 1024);
 });
@@ -146,6 +146,8 @@ test('a content file inflating past 64 MiB is refused, one just under is read', 
 test('a topic with no title stops the import and names its parent', () => {
   const noTitle = JSON.stringify([{ title: 'S', rootTopic: { title: 'trip', children: { attached: [{ title: '  ' }] } } }]);
   expect(() => readXmind(zip({ 'content.json': noTitle }))).toThrow('a topic has no title (under "trip")');
+  const underTwoLines = JSON.stringify([{ rootTopic: { title: 'two\nlines', children: { attached: [{}] } } }]);
+  expect(() => readXmind(zip({ 'content.json': underTwoLines }))).toThrow('a topic has no title (under "two lines")');
   expect(() => readXmind(zip({ 'content.json': '[{"rootTopic":{"title":5}}]' }))).toThrow(/^a topic has no title;/);
   const xml = '<xmap-content><sheet><topic><title>root</title><children><topics type="attached"><topic></topic></topics></children></topic></sheet></xmap-content>';
   expect(() => readXmind(zip({ 'content.xml': xml }))).toThrow('a topic has no title (under "root")');

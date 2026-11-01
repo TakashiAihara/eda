@@ -91,7 +91,7 @@ export function readXmind(bytes: Uint8Array): XmindSheet[] {
 /** eda nodes cannot be empty; a topic that is only an image has nothing to carry over. */
 function title(text: unknown, parent: string | undefined): string {
   if (typeof text === 'string' && text.trim() !== '') return text;
-  throw new MapError(`a topic has no title${parent === undefined ? '' : ` (under "${parent}")`}; give it one in XMind and import again`);
+  throw new MapError(`a topic has no title${parent === undefined ? '' : ` (under "${parent.replace(/\s+/g, ' ')}")`}; give it one in XMind and import again`);
 }
 
 const tally = (d: Record<string, number>, kind: string, n = 1): void => {
