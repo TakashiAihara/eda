@@ -7,7 +7,6 @@ import {
   addChild,
   addUrl,
   editNode,
-
   kaneoTaskUrl,
   newMap,
   parseKaneoUrl,

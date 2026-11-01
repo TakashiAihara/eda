@@ -3,7 +3,7 @@
 ## Words that collide
 
 - **suggestion** vs **candidate**: a *suggestion* is what an AI proposed through MCP (`source.by = ai`). A *candidate* is anything waiting in the candidate list, which in maps saved before #5 also includes hand edits of `map.md` (`source.by = md-edit`). Every suggestion is a candidate; not every candidate is a suggestion. Both are `Suggestion` records in `eda.json`.
-- **map** vs **map.md**: the *map* is the tree held in `eda.json` by the server. `map.md` is an export of it, rewritten on every save and never read back.
+- **map** vs **map.md**: the *map* is the tree held in `eda.json` by the server. `map.md` is an export of it, rewritten at start and on every save and never read back.
 - **session**: always a Claude Code session (its `CLAUDE_CODE_SESSION_ID`), never a browser session.
 
 ## Terms

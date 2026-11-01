@@ -110,8 +110,8 @@ export function startServer(opts: ServeOptions) {
     rev += 1;
   };
   remember(opts.session ?? null, opts.cwd ?? null);
-  // Exported once at start too: a map.md deleted, or left behind by a save cut short between the
-  // two files, would otherwise stay wrong until the first change.
+  // Saved once at start too (eda.json as is, map.md from it): a map.md deleted, or left behind by a
+  // save cut short between the two files, would otherwise stay wrong until the first change.
   saveMap(opts.dir, doc);
 
   /** null, arrays and scalars are valid JSON but not a record; read them as empty, so field reads give 400s rather than TypeErrors. */

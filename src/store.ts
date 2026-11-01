@@ -2,7 +2,7 @@
  * Where a map and eda's own state live on disk.
  *
  * A map is one directory: `eda.json` is the source of truth and only the server writes
- * it; `map.md` is an export for people and other tools, rewritten on every save and never read
+ * it; `map.md` is an export for people and other tools, rewritten at start and on every save and never read
  * back: the map is changed only through the UI (judgment queue D-02, #5).
  */
 

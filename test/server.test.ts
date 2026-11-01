@@ -101,14 +101,22 @@ test('a hand edit of map.md is not read: the map and the candidate list stay, an
   }
 });
 
-test('starting on an existing map writes map.md again, from eda.json', () => {
+test('starting on an existing map writes map.md again, from eda.json', async () => {
   const d = temp('eda-md-');
   const first = startServer({ dir: d, host: '127.0.0.1', port: 0, title: 'trip' });
   first.stop();
+  // A child written into eda.json only, as a save cut short between the two files leaves it.
+  const { addChild } = await import('../src/map.ts');
+  const { saveMap } = await import('../src/store.ts');
+  const doc = loadMap(d)!;
+  addChild(doc, addChild(doc, 'n1', 'hotel').id, 'booking');
+  saveMap(d, doc);
+  const json = readFileSync(join(d, 'eda.json'), 'utf8');
   writeFileSync(join(d, 'map.md'), '# stale\n');
   const again = startServer({ dir: d, host: '127.0.0.1', port: 0 });
   again.stop();
-  expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe('# trip\n\n');
+  expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n  - booking\n');
+  expect(readFileSync(join(d, 'eda.json'), 'utf8')).toBe(json);
 });
 
 test('a directory with a map.md but no eda.json is refused, and the map.md is left as it was', () => {
