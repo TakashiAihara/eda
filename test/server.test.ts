@@ -163,7 +163,7 @@ test('a map whose linked files are not there is refused at start, and its links 
   startServer({ dir: d2, host: '127.0.0.1', port: 0, title: 't' }).stop();
   rmSync(join(d2, 'map.md'));
   symlinkSync(join(gone, 'map.md'), join(d2, 'map.md'));
-  expect(() => startServer({ dir: d2, host: '127.0.0.1', port: 0 })).toThrow(`${join(d2, 'map.md')} is a symlink to nothing`);
+  expect(() => startServer({ dir: d2, host: '127.0.0.1', port: 0 })).toThrow(`${join(d2, 'map.md')} is a symlink to nothing; mount or fix what it points at, or remove the link`);
   expect(readlinkSync(join(d2, 'map.md'))).toBe(join(gone, 'map.md'));
 });
 
@@ -176,7 +176,51 @@ test('a map.md that is not a regular file is not replaced', async () => {
   expect(lstatSync(join(d, 'map.md')).isFIFO()).toBe(true);
   expect(() => startServer({ dir: d, host: '127.0.0.1', port: 0 })).toThrow(`${join(d, 'map.md')} is not a regular file`);
   expect(lstatSync(join(d, 'map.md')).isFIFO()).toBe(true);
-  expect(readdirSync(d).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+});
+
+test('a save refused for map.md leaves eda.json as it was', async () => {
+  const { symlinkSync } = await import('node:fs');
+  const d = temp('eda-half-');
+  const s = startServer({ dir: d, host: '127.0.0.1', port: 0, title: 't' });
+  try {
+    const json = readFileSync(join(d, 'eda.json'), 'utf8');
+    // The vault map.md lived in goes away while the map is open.
+    rmSync(join(d, 'map.md'));
+    symlinkSync(join(temp('eda-unmounted-'), 'gone', 'map.md'), join(d, 'map.md'));
+    const r = await fetch(`http://127.0.0.1:${s.server.port}/api/nodes`, { method: 'POST', headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' }, body: JSON.stringify({ parentId: 'n1', text: 'lost?' }) });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe(`${join(d, 'map.md')} is a symlink to nothing; mount or fix what it points at, or remove the link`);
+    expect(readFileSync(join(d, 'eda.json'), 'utf8')).toBe(json);
+  } finally {
+    s.stop();
+  }
+});
+
+test('a dangling eda.json beside a map.md is reported as the dangling link, not as a stray map.md', async () => {
+  const { symlinkSync } = await import('node:fs');
+  const d = temp('eda-dangling-json-');
+  writeFileSync(join(d, 'map.md'), '# kept\n');
+  symlinkSync(join(temp('eda-unmounted-'), 'gone', 'eda.json'), join(d, 'eda.json'));
+  expect(() => startServer({ dir: d, host: '127.0.0.1', port: 0 })).toThrow(`${join(d, 'eda.json')} is a symlink to nothing`);
+  expect(readFileSync(join(d, 'map.md'), 'utf8')).toBe('# kept\n');
+});
+
+test('the running-map record is written in place of a symlink there, not through it', async () => {
+  const { lstatSync, mkdirSync, symlinkSync } = await import('node:fs');
+  const { registerInstance } = await import('../src/store.ts');
+  const victim = join(temp('eda-victim-'), 'victim.txt');
+  writeFileSync(victim, 'keep me\n');
+  mkdirSync(join(home, 'instances'), { recursive: true });
+  // A pid no test registers.
+  const pid = 999_999_001;
+  symlinkSync(victim, join(home, 'instances', `${pid}.json`));
+  const unregister = registerInstance({ pid, dir: '/x', host: '127.0.0.1', port: 1, startedAt: '' });
+  try {
+    expect(readFileSync(victim, 'utf8')).toBe('keep me\n');
+    expect(lstatSync(join(home, 'instances', `${pid}.json`)).isSymbolicLink()).toBe(false);
+  } finally {
+    unregister();
+  }
 });
 
 test('a directory with a map.md but no eda.json is refused, and the map.md is left as it was', () => {

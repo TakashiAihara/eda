@@ -20,28 +20,39 @@ export function edaHome(): string {
 }
 
 /**
- * Replace a file whole, so a reader never sees half of it. Through a symlink to the file it names:
+ * Where a write to one of a map's files lands: through a symlink to the file it names, since
  * renaming over the link would leave a plain file here and the file it pointed at stale (#36).
- * An existing file keeps its mode, from the moment the temp file exists; its owner, ACLs and
- * extended attributes are not carried over.
+ * The mode is the existing file's, if any.
  *
- * Refused rather than written: a symlink that points nowhere (its file is somewhere not mounted,
+ * Refused rather than landed: a symlink that points nowhere (its file is somewhere not mounted,
  * and writing here would split the map from it) and a path that is not a regular file (a FIFO, a
  * device), which a rename would replace.
  */
-function writeAtomic(path: string, body: string): void {
-  if (!existsSync(path) && isLink(path)) throw new MapError(`${path} is a symlink to nothing; eda will not write in its place`);
+function landing(path: string): { target: string; mode?: number } {
+  if (!existsSync(path) && isLink(path)) throw new MapError(`${path} is a symlink to nothing; mount or fix what it points at, or remove the link`);
   const target = existsSync(path) ? realpathSync(path) : path;
-  const mode = existsSync(target) ? statSync(target) : undefined;
-  if (mode !== undefined && !mode.isFile()) throw new MapError(`${path} is not a regular file; eda will not replace it`);
-  // A dot name, so a tool syncing the target's directory does not pick the half-written file up.
-  const tmp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
+  if (!existsSync(target)) return { target };
+  const st = statSync(target);
+  if (!st.isFile()) throw new MapError(`${path} is not a regular file; eda will not replace it`);
+  return { target, mode: st.mode & 0o7777 };
+}
+
+/**
+ * Replace a file whole, so a reader never sees half of it. `mode`, when given, is the file's from
+ * the moment the temp file exists; owner, ACLs and extended attributes are not carried over.
+ * A path that is a symlink is replaced, not followed: only a map's own files go through `landing`.
+ */
+function writeAtomic(path: string, body: string, mode?: number): void {
+  // A dot name, so tools that skip dotfiles (Obsidian, Markmap) do not pick the half-written file up.
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
   try {
-    writeFileSync(tmp, body, mode === undefined ? undefined : { mode: mode.mode & 0o7777 });
+    writeFileSync(tmp, body, mode === undefined ? undefined : { mode });
     // writeFileSync's mode is cut by the umask; set it whole.
-    if (mode !== undefined) chmodSync(tmp, mode.mode & 0o7777);
-    renameSync(tmp, target);
+    if (mode !== undefined) chmodSync(tmp, mode);
+    renameSync(tmp, path);
   } catch (err) {
+    // Not reached by the tests (a failing write or rename needs a full or broken disk); a temp
+    // file left by one would sit in the person's directory.
     rmSync(tmp, { force: true });
     throw err;
   }
@@ -61,14 +72,17 @@ export function loadMap(dir: string): MapDoc | undefined {
 }
 
 export function saveMap(dir: string, doc: MapDoc): void {
-  writeAtomic(join(dir, JSON_FILE), `${JSON.stringify(doc, null, 2)}\n`);
-  writeAtomic(join(dir, MD_FILE), toMarkdown(doc.root));
+  // Both checked before either is written: a refused map.md must not leave the change in eda.json.
+  const json = landing(join(dir, JSON_FILE));
+  const md = landing(join(dir, MD_FILE));
+  writeAtomic(json.target, `${JSON.stringify(doc, null, 2)}\n`, json.mode);
+  writeAtomic(md.target, toMarkdown(doc.root), md.mode);
 }
 
 export function openMap(dir: string, title?: string): MapDoc {
   mkdirSync(dir, { recursive: true });
-  // An eda.json linked somewhere not there now reads as no map; the save of a fresh one is what
-  // refuses it (see writeAtomic), before anything is written.
+  // An eda.json linked somewhere not there now would read as no map at all.
+  landing(join(dir, JSON_FILE));
   const doc = loadMap(dir);
   if (doc) return doc;
   // A map.md that is not eda's export: writing the new map would replace a person's file, and
