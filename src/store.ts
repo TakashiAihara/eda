@@ -7,7 +7,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { MapError, type MapDoc, newMap, toMarkdown } from './map.ts';
@@ -19,10 +19,20 @@ export function edaHome(): string {
   return process.env['EDA_HOME'] ?? join(homedir(), '.eda');
 }
 
-function writeAtomic(path: string, body: string, mode?: number): void {
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, body, mode === undefined ? undefined : { mode });
-  renameSync(tmp, path);
+/**
+ * Replace a file whole, so a reader never sees half of it. Through a symlink to the file it names:
+ * renaming over the link would leave a plain file here and the file it pointed at stale (#36). An
+ * existing file keeps its mode, which a fresh temp file would not carry.
+ *
+ * shortcut: a symlink that points nowhere is replaced by a plain file; resolve it by hand if a
+ * dangling link ever needs to be written through.
+ */
+function writeAtomic(path: string, body: string): void {
+  const target = existsSync(path) ? realpathSync(path) : path;
+  const tmp = `${target}.${process.pid}.tmp`;
+  writeFileSync(tmp, body);
+  if (existsSync(target)) chmodSync(tmp, statSync(target).mode & 0o7777);
+  renameSync(tmp, target);
 }
 
 export function loadMap(dir: string): MapDoc | undefined {

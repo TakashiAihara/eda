@@ -119,6 +119,31 @@ test('starting on an existing map writes map.md again, from eda.json', async () 
   expect(readFileSync(join(d, 'eda.json'), 'utf8')).toBe(json);
 });
 
+test('a symlinked map.md and eda.json are written through, and keep the mode of the files they point at', async () => {
+  const { lstatSync, statSync, symlinkSync, chmodSync, renameSync } = await import('node:fs');
+  const { saveMap } = await import('../src/store.ts');
+  const { addChild } = await import('../src/map.ts');
+  const d = temp('eda-link-');
+  const vault = temp('eda-vault-');
+  const first = startServer({ dir: d, host: '127.0.0.1', port: 0, title: 'trip' });
+  first.stop();
+  // Both files moved into another directory and linked back, as a vault-kept map would be.
+  for (const f of ['map.md', 'eda.json']) {
+    renameSync(join(d, f), join(vault, f));
+    chmodSync(join(vault, f), 0o640);
+    symlinkSync(join(vault, f), join(d, f));
+  }
+  const doc = loadMap(d)!;
+  addChild(doc, 'n1', 'hotel');
+  saveMap(d, doc);
+  for (const f of ['map.md', 'eda.json']) {
+    expect([f, lstatSync(join(d, f)).isSymbolicLink()]).toEqual([f, true]);
+    expect([f, statSync(join(vault, f)).mode & 0o777]).toEqual([f, 0o640]);
+  }
+  expect(readFileSync(join(vault, 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n');
+  expect(loadMap(vault)!.root.children.map((c) => c.text)).toEqual(['hotel']);
+});
+
 test('a directory with a map.md but no eda.json is refused, and the map.md is left as it was', () => {
   const d = temp('eda-md-');
   writeFileSync(join(d, 'map.md'), '# ideas\n\n- one\n');
