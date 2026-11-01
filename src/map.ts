@@ -314,6 +314,9 @@ export function suggest(doc: MapDoc, input: AiInput, source: { by: 'ai'; session
   } else {
     mustNode(doc, input.nodeId);
     if (input.text === undefined && urls.length === 0) throw new MapError('an edit needs text or urls');
+    // Whoever suggested it: the map has one ring per node, and the later adoption would overwrite the earlier text.
+    const pending = doc.suggestions.find((x) => x.kind === 'edit' && x.nodeId === input.nodeId);
+    if (pending) throw new MapError(`${pending.id} already suggests a change to ${input.nodeId} and is waiting for the person`, 409);
     s = {
       id: nextId(doc, 's'),
       kind: 'edit',
