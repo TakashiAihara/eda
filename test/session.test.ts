@@ -4,7 +4,7 @@
  */
 
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,7 +27,7 @@ afterAll(() => {
 const config = temp('eda-session-cfg-');
 mkdirSync(join(config, 'sessions'), { recursive: true });
 process.env['CLAUDE_CONFIG_DIR'] = config;
-const { findSession, isLive, watchSession } = await import('../src/session.ts');
+const { findSession, watchSession } = await import('../src/session.ts');
 
 const hasProc = existsSync('/proc/self/stat');
 const startOf = (pid: number): string => {
@@ -54,10 +54,33 @@ const until = async (ok: () => boolean, ms: number): Promise<boolean> => {
 };
 
 test('the live process recorded for a session is found, and not one recorded for another session', () => {
+  // The other session's records on both sides, so which file is read first decides nothing.
+  fakeSession('S-other');
   const p = fakeSession('S-find');
   fakeSession('S-other');
   expect(findSession('S-find')?.pid).toBe(p.pid);
   expect(findSession('S-none')).toBeUndefined();
+});
+
+test('a record whose pid is not the one its file is named for is not the session', () => {
+  const p = Bun.spawn(['sleep', '30']);
+  sleeps.push(p);
+  const q = Bun.spawn(['sleep', '30']);
+  sleeps.push(q);
+  writeFileSync(join(config, 'sessions', `${q.pid}.json`), JSON.stringify({ pid: p.pid, sessionId: 'S-misnamed', procStart: hasProc ? startOf(p.pid) : '0' }));
+  writeFileSync(join(config, 'sessions', '1.json'), JSON.stringify({ pid: 1, sessionId: 'S-misnamed' }));
+  expect(findSession('S-misnamed')).toBeUndefined();
+});
+
+test.if(hasProc)('a zombie, ended but not reaped, is not the session', async () => {
+  // `sh` leaves `sleep 0` to the `sleep 30` it execs into, which never waits for it.
+  const parent = Bun.spawn(['sh', '-c', 'sleep 0 & echo $!; exec sleep 30'], { stdout: 'pipe' });
+  sleeps.push(parent);
+  const reader = parent.stdout.getReader();
+  const pid = Number(new TextDecoder().decode((await reader.read()).value).trim());
+  expect(await until(() => readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]!.startsWith('Z'), 2000)).toBe(true);
+  writeFileSync(join(config, 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId: 'S-zombie', procStart: startOf(pid) }));
+  expect(findSession('S-zombie')).toBeUndefined();
 });
 
 test('a record whose process has ended is not the session', async () => {
@@ -69,7 +92,7 @@ test('a record whose process has ended is not the session', async () => {
 
 test.if(hasProc)('a live pid with another start time is a reused pid, not the session', () => {
   const p = fakeSession('S-reused', () => '1');
-  expect(isLive({ pid: p.pid, start: '1' })).toBe(false);
+
   expect(findSession('S-reused')).toBeUndefined();
 });
 
@@ -77,7 +100,8 @@ test('a record without a start time is the session while its pid lives, and not 
   const p = Bun.spawn(['sleep', '30']);
   sleeps.push(p);
   writeFileSync(join(config, 'sessions', `${p.pid}.json`), JSON.stringify({ pid: p.pid, sessionId: 'S-nostart' }));
-  expect(findSession('S-nostart')).toEqual({ pid: p.pid });
+  // Held to the start time seen now, so a later reuse of the pid is told apart.
+  expect(findSession('S-nostart')).toEqual({ pid: p.pid, start: hasProc ? startOf(p.pid) : expect.any(String) });
   p.kill();
   await p.exited;
   expect(findSession('S-nostart')).toBeUndefined();
@@ -86,7 +110,7 @@ test('a record without a start time is the session while its pid lives, and not 
 test('the watch says gone once the process ends, and only once', async () => {
   const p = fakeSession('S-watch');
   let calls = 0;
-  watchSession('S-watch', findSession('S-watch')!, () => calls++, 20);
+  watchSession('S-watch', () => calls++, 20);
   await Bun.sleep(100);
   expect(calls).toBe(0);
   p.kill();
@@ -98,7 +122,7 @@ test('the watch says gone once the process ends, and only once', async () => {
 test('a session resumed under another pid keeps the watch going until that one ends too', async () => {
   const first = fakeSession('S-resume');
   let calls = 0;
-  watchSession('S-resume', findSession('S-resume')!, () => calls++, 20);
+  watchSession('S-resume', () => calls++, 20);
   const second = fakeSession('S-resume');
   first.kill();
   await first.exited;
@@ -109,36 +133,51 @@ test('a session resumed under another pid keeps the watch going until that one e
 });
 
 /** `eda serve` as a session would start it, reading the fake session's records. */
-const serve = (session: string | undefined) => {
-  const env: Record<string, string> = { ...(process.env as Record<string, string>), CLAUDE_CONFIG_DIR: config, EDA_HOME: temp('eda-session-home-'), XDG_CONFIG_HOME: temp('eda-session-xdg-') };
+const serve = async (session: string | undefined) => {
+  const home = temp('eda-session-home-');
+  const dir = temp('eda-session-map-');
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), CLAUDE_CONFIG_DIR: config, EDA_HOME: home, XDG_CONFIG_HOME: temp('eda-session-xdg-') };
   delete env['CLAUDE_CODE_SESSION_ID'];
   delete env['KANEO_API_KEY'];
   if (session !== undefined) env['CLAUDE_CODE_SESSION_ID'] = session;
-  const p = Bun.spawn(['bun', join(import.meta.dir, '..', 'src', 'cli.ts'), 'serve', temp('eda-session-map-'), '--host', '127.0.0.1'], { env, stdout: 'pipe', stderr: 'pipe' });
+  const p = Bun.spawn(['bun', join(import.meta.dir, '..', 'src', 'cli.ts'), 'serve', dir, '--host', '127.0.0.1'], { env, stdout: 'pipe', stderr: 'pipe' });
   sleeps.push(p);
-  return { p, err: new Response(p.stderr).text(), out: new Response(p.stdout).text() };
+  const err = new Response(p.stderr).text();
+  // Up once it prints its URL, which it does after it has looked for the session.
+  const reader = p.stdout.getReader();
+  let out = '';
+  while (!out.includes('\n')) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    out += new TextDecoder().decode(value);
+  }
+  return { p, err, home, dir };
 };
 
-test('eda serve stops when the session that started it ends', async () => {
+test('eda serve stays up while the session lives, and stops, tidied, when it ends', async () => {
   const claude = fakeSession('S-serve');
-  const { p, err } = serve('S-serve');
-  // Up and watching: a few polls go by with the session alive and the map still there.
-  await Bun.sleep(1500);
+  const { p, err, home, dir } = await serve('S-serve');
+  // Past the first 5 s look: the session is alive, so the map is still there.
+  await Bun.sleep(6000);
   expect(p.exitCode).toBeNull();
   claude.kill();
   const t0 = Date.now();
   const code = await Promise.race([p.exited, Bun.sleep(9000).then(() => 'still running')]);
   expect(code).toBe(0);
-  // The poll is 5 s, so the map is gone within one of them.
+  // The look is every 5 s, so the map is gone within one of them.
   expect(Date.now() - t0).toBeLessThan(7000);
   expect(await err).toContain('eda: session S-serve ended; stopping the map');
-}, 15_000);
+  // Stopped the way Ctrl+C stops it: no lock and no running-map record left behind.
+  expect(existsSync(join(dir, 'eda.lock'))).toBe(false);
+  expect(readdirSync(join(home, 'instances'))).toEqual([]);
+}, 25_000);
 
 test('eda serve started for a session it cannot find says so and stays up', async () => {
-  const { p, err } = serve('S-missing');
-  await Bun.sleep(1500);
+  const { p, err } = await serve('S-missing');
+  // Past where a first look would have been.
+  await Bun.sleep(6000);
   expect(p.exitCode).toBeNull();
   p.kill();
   await p.exited;
   expect(await err).toContain('eda: no running Claude Code process found for session S-missing; the map stays up after the session ends');
-}, 10_000);
+}, 15_000);

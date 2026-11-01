@@ -35,7 +35,7 @@ claude mcp add -s user eda -- eda mcp
 claude --dangerously-load-development-channels server:eda
 ```
 
-Inside the session, say what you want to think about; the session runs `eda serve` and gives you the URL. A session started with `CLAUDE_CODE_SESSION_ID` is recorded in the map, and `claude --resume <id>` brings you back to it. A map the session started stops within 5 s of that session's Claude Code process ending, whether it ran as the session's background shell or was detached (it finds the process through `~/.claude/sessions/<pid>.json`, or `$CLAUDE_CONFIG_DIR/sessions`). A map started outside a session, or for a session whose process it cannot find, stays up until you stop it.
+Inside the session, say what you want to think about; the session runs `eda serve` and gives you the URL. A session started with `CLAUDE_CODE_SESSION_ID` is recorded in the map, and `claude --resume <id>` brings you back to the session. A map the session started stops within 5 s of that session's Claude Code process ending, whether it ran as the session's background shell or was detached (it finds the process through `~/.claude/sessions/<pid>.json`, or `$CLAUDE_CONFIG_DIR/sessions`), and says so on its stderr; the open page stops updating. To pick the map up again after resuming, have the session run `eda serve <dir>` again: the map is in the directory. It watches the process, not the conversation, so a `/clear` in the same process keeps it up. A map started outside a session, or for a session whose process it cannot find, stays up until you stop it.
 
 In the node panel, 「タスクにする」 turns the node into a kaneo task and 「session に依頼」 hands a linked task to the configured command; kaneo's status comes back on the node's task tag.
 
