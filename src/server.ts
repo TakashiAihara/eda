@@ -72,14 +72,15 @@ export function startServer(opts: ServeOptions) {
   // Starts from the clock so a browser left open across a restart sees a new value.
   let rev = Date.now();
   const cfg = config();
-  // A host that is blank or not a string is no host: `/api` alone is nowhere to send a key.
+  // A host that is blank or not a string is no host: `/api` alone is nowhere to send a key, and a
+  // number would fail at start where kaneoBase is built.
   const rawHost: unknown = cfg.kaneo?.host;
-  const kaneoHost = typeof rawHost === 'string' && rawHost.trim() !== '' ? rawHost : null;
+  const kaneoHost = typeof rawHost === 'string' && rawHost.trim() !== '' ? rawHost.trim() : null;
   const kaneoWorkspace = cfg.kaneo?.workspace ?? '';
   // Read once, at start: a key that appeared later would switch the buttons on under a browser
   // that had drawn them away, and one that goes must not be used half-way through the map's life.
   // An empty KANEO_API_KEY counts as unset; one that cannot go in a header (a pasted `\r`, spaces)
-  // is refused by the check the command's key gets once its line end is cut, rather than switching
+  // is refused by the check the command's key gets once it is trimmed, rather than switching
   // on features that all fail. Not trimmed: an env value is what the person set, taken literally.
   const envKey = process.env['KANEO_API_KEY'] ?? '';
   const envKeyOk = isHeaderKey(envKey);

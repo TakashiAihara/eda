@@ -799,6 +799,13 @@ test('an empty, blank or non-string kaneo.host is no host: keyCommand is not run
   }
 });
 
+test('a kaneo.host with spaces around it is used without them', async () => {
+  await withServer({ kaneo: { host: `  ${kaneoUrl}/  `, workspace: 'W1' } }, 'K', async (call) => {
+    expect(((await call('GET', '/api/state')).json as any).kaneo.host).toBe(`${kaneoUrl}/`);
+    expect((await call('GET', '/api/kaneo/projects')).status).toBe(200);
+  });
+});
+
 test('a KANEO_API_KEY that cannot go in a header is refused in one line, and keyCommand supplies the key', async () => {
   for (const bad of ['K\r', 'K\n', '   ', 'K K']) {
     const said = await stderrOf(() =>
