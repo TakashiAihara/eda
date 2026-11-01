@@ -47,15 +47,20 @@ function startOf(pid: number): string | null | undefined {
   }
 }
 
+/**
+ * Whether a start time read now (`startOf`) is the process recorded with `recorded`: not when it
+ * is not running, yes when `ps` could not say (see `startOf`), else when the two agree.
+ */
+export const startMatches = (now: string | null | undefined, recorded: string): boolean => now === null || now === recorded;
+
 /** Whether `p` is still running as the process it was found to be. */
-function same(p: SessionProcess): boolean {
-  const start = startOf(p.pid);
-  return start !== undefined && (start === null || start === p.start);
-}
+const same = (p: SessionProcess): boolean => startMatches(startOf(p.pid), p.start);
 
 /**
  * The live process Claude Code recorded for `session`, if any. A record without a start time is
- * not taken: its pid could be anyone's by now, and Claude Code writes one.
+ * not taken: its pid could be anyone's by now, and where `ps` cannot say (macOS) it would match
+ * anything. Claude Code leaves it out only when its own read failed, so such a session gets the
+ * "not found" answer and a map that stays up.
  */
 export function findSession(session: string): SessionProcess | undefined {
   let names: string[];

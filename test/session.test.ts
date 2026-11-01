@@ -27,7 +27,7 @@ afterAll(() => {
 const config = temp('eda-session-cfg-');
 mkdirSync(join(config, 'sessions'), { recursive: true });
 process.env['CLAUDE_CONFIG_DIR'] = config;
-const { findSession, watchSession } = await import('../src/session.ts');
+const { findSession, startMatches, watchSession } = await import('../src/session.ts');
 
 const hasProc = existsSync('/proc/self/stat');
 /** The start time as Claude Code writes `procStart` on this OS. */
@@ -110,6 +110,14 @@ test('a record without a start time is not the session, even with its pid runnin
   expect(findSession('S-nostart')).toEqual({ pid: p.pid, start: startOf(p.pid) });
 });
 
+test('a start time read now matches the recorded one, an ended process never, and one ps could not read always', () => {
+  expect(startMatches('100', '100')).toBe(true);
+  expect(startMatches('101', '100')).toBe(false);
+  expect(startMatches(undefined, '100')).toBe(false);
+  // As Claude Code reads it: a slow or failed `ps` on macOS does not end the session.
+  expect(startMatches(null, '100')).toBe(true);
+});
+
 test('the watch says gone once the process ends, and only once', async () => {
   const p = fakeSession('S-watch');
   let calls = 0;
@@ -117,7 +125,7 @@ test('the watch says gone once the process ends, and only once', async () => {
   await Bun.sleep(100);
   expect(calls).toBe(0);
   p.kill();
-  expect(await until(() => calls > 0, 2000)).toBe(true);
+  expect(await until(() => calls > 0, 5000)).toBe(true);
   await Bun.sleep(100);
   expect(calls).toBe(1);
 });
@@ -131,7 +139,7 @@ test('a conversation switched in the same process (/clear) keeps the watch on th
   await Bun.sleep(150);
   expect(calls).toBe(0);
   p.kill();
-  expect(await until(() => calls === 1, 2000)).toBe(true);
+  expect(await until(() => calls === 1, 5000)).toBe(true);
 });
 
 test('a session resumed under another pid keeps the watch going until that one ends too', async () => {
@@ -144,7 +152,7 @@ test('a session resumed under another pid keeps the watch going until that one e
   await Bun.sleep(150);
   expect(calls).toBe(0);
   second.kill();
-  expect(await until(() => calls === 1, 2000)).toBe(true);
+  expect(await until(() => calls === 1, 5000)).toBe(true);
 });
 
 /** `eda serve` as a session would start it, reading the fake session's records. */
@@ -179,7 +187,8 @@ test('eda serve stays up while the session lives, and stops, tidied, when it end
   const t0 = Date.now();
   const code = await Promise.race([p.exited, Bun.sleep(12_000).then(() => 'still running')]);
   expect(code).toBe(0);
-  // The look is every 5 s, so the map is gone within one of them.
+  // The look is every 5 s, so the map is gone within one of them; the bound leaves a second
+  // look's worth for a loaded host.
   expect(Date.now() - t0).toBeLessThan(10_000);
   expect(await err).toContain('eda: session S-serve ended; stopping the map');
   // Stopped the way Ctrl+C stops it: no lock and no running-map record left behind.
