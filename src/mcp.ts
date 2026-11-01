@@ -13,7 +13,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { type Chat, MAX_PENDING, type MapDoc } from './map.ts';
-import { type Instance, readInstances, token } from './store.ts';
+import { aiToken, type Instance, readInstances } from './store.ts';
 
 const INTERVAL_MS = 2000;
 
@@ -38,7 +38,7 @@ export class Client {
     private readonly session: string,
     private readonly cwd: string,
     private readonly instances: () => Instance[] = readInstances,
-    private readonly secret: () => string = token,
+    private readonly secret: () => string = aiToken,
   ) {}
 
   async call(t: Target, path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -81,8 +81,8 @@ export class Client {
     const mine: Target[] = [];
     for (const r of running) {
       try {
-        // /api/rev, not /api/state: this runs for every running map on every channel pass.
-        const s = (await this.call(r, '/api/rev')) as { sessions: string[] };
+        // /api/ai/rev, not /api/ai/state: this runs for every running map on every channel pass.
+        const s = (await this.call(r, '/api/ai/rev')) as { sessions: string[] };
         if (s.sessions.includes(this.session)) mine.push(r);
       } catch {
         /* a server going down between the listing and the call */
@@ -257,9 +257,9 @@ export async function runMcp(): Promise<void> {
           // A recorded position that failed to save is retried every pass until it sticks;
           // otherwise a restart would replay what was already delivered.
           await ack(t);
-          const { rev } = (await client.call(t, '/api/rev')) as { rev: number };
+          const { rev } = (await client.call(t, '/api/ai/rev')) as { rev: number };
           if (revs.get(t.dir) === rev) continue;
-          const state = (await client.call(t, '/api/state')) as { doc: MapDoc };
+          const state = (await client.call(t, '/api/ai/state')) as { doc: MapDoc };
           for (const c of undelivered(state.doc, session, cursor.get(t.dir))) {
             await mcp.notification({ method: 'notifications/claude/channel', params: describe(t.dir, c, state.doc) });
             // Advanced once the notification is written. Claude Code does not acknowledge

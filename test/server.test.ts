@@ -20,7 +20,7 @@ process.env['EDA_HOME'] = home;
 process.env['XDG_CONFIG_HOME'] = home;
 const { startServer } = await import('../src/server.ts');
 const { Client, describe: describeChat, runTool, undelivered } = await import('../src/mcp.ts');
-const { loadMap, token } = await import('../src/store.ts');
+const { aiToken, loadMap, token } = await import('../src/store.ts');
 const { toMarkdown } = await import('../src/map.ts');
 
 const dir = temp('eda-map-');
@@ -202,10 +202,28 @@ test('a non-object JSON body is read as empty (no node named), not a 500', async
   expect(r.status).toBe(404);
 });
 
+test('the two tokens are different and each opens only its own routes', async () => {
+  expect(aiToken()).not.toBe(token());
+  const call = (path: string, secret: string, method = 'GET', body?: unknown) =>
+    fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json', 'x-eda-session': 'S1' }, ...(body === undefined || method === 'GET' ? {} : { body: JSON.stringify(body) }) });
+  // The person's token reaches none of the AI routes, so the browser side cannot speak as the AI.
+  for (const [path, method] of [['/api/ai/map', 'GET'], ['/api/ai/rev', 'GET'], ['/api/ai/state', 'GET'], ['/api/ai/suggest', 'POST'], ['/api/ai/reply', 'POST'], ['/api/ai/delivered', 'POST']] as const) {
+    expect([path, (await call(path, token(), method, {})).status]).toEqual([path, 401]);
+    expect([path, (await call(path, aiToken(), method, {})).status]).not.toEqual([path, 401]);
+  }
+  // The AI's token reaches none of the person's: no adopting, deleting, editing or reading the UI state.
+  const s = (await (await call('/api/ai/suggest', aiToken(), 'POST', { kind: 'add', parentId: 'n1', text: 'by token', reason: '' })).json()) as { id: string };
+  for (const [path, method] of [['/api/state', 'GET'], ['/api/rev', 'GET'], [`/api/suggestions/${s.id}/accept`, 'POST'], [`/api/suggestions/${s.id}/reject`, 'POST'], ['/api/nodes', 'POST'], ['/api/nodes/n1', 'PATCH'], ['/api/nodes/n1', 'DELETE'], ['/api/chat', 'POST']] as const) {
+    expect([path, method, (await call(path, aiToken(), method, {})).status]).toEqual([path, method, 401]);
+  }
+  expect((await person('GET', '/api/state')).json.doc.suggestions.some((x: any) => x.id === s.id)).toBe(true);
+  await person('POST', `/api/suggestions/${s.id}/reject`, {});
+});
+
 test('an AI call without a session is refused', async () => {
   const r = await fetch(`${base}/api/ai/suggest`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${aiToken()}`, 'content-type': 'application/json' },
     body: JSON.stringify({ kind: 'add', parentId: 'n1', text: 'x', reason: '' }),
   });
   expect(r.status).toBe(400);
@@ -312,7 +330,7 @@ test('a person sets and clears a marker; the AI reads it, and its suggestions ca
   // An AI edit carrying markers: the field is not read, so adopting it changes none.
   const r = await fetch(`${base}/api/ai/suggest`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json', 'x-eda-session': 'S9' },
+    headers: { authorization: `Bearer ${aiToken()}`, 'content-type': 'application/json', 'x-eda-session': 'S9' },
     body: JSON.stringify({ kind: 'edit', nodeId: n.id, text: 'marked!', markers: ['flag'], reason: 'r' }),
   });
   const s = (await r.json()) as { id: string };

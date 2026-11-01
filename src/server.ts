@@ -28,7 +28,7 @@ import {
   taskDescription,
   toOutlineForAi,
 } from './map.ts';
-import { config, openMap, saveMap, token } from './store.ts';
+import { aiToken, config, openMap, saveMap, token } from './store.ts';
 
 export type ServeOptions = { dir: string; host: string; port: number; title?: string; session?: string; cwd?: string; kaneoPollMs?: number; keyCommandMs?: number };
 
@@ -68,7 +68,9 @@ function keyFromCommand(raw: unknown, ceilingMs: number): string {
 
 export function startServer(opts: ServeOptions) {
   const doc = openMap(opts.dir, opts.title);
-  const secret = token();
+  // Two credentials, each good for its own routes only: the person's for everything in the UI,
+  // the MCP server's for `/api/ai/*` (#2). Neither opens the other's.
+  const secrets = { person: token(), ai: aiToken() };
   // Starts from the clock so a browser left open across a restart sees a new value.
   let rev = Date.now();
   const cfg = config();
@@ -126,11 +128,11 @@ export function startServer(opts: ServeOptions) {
     }
   };
 
-  /** Wrap a handler: auth, save on success, errors as JSON. */
+  /** Wrap a handler: auth for `who`, save on success, errors as JSON. */
   const api =
-    (write: boolean, h: Handler) =>
+    (write: boolean, h: Handler, who: keyof typeof secrets = 'person') =>
     async (req: Request & { params?: Record<string, string> }): Promise<Response> => {
-      if (req.headers.get('authorization') !== `Bearer ${secret}`) return Response.json({ error: 'unauthorized' }, { status: 401 });
+      if (req.headers.get('authorization') !== `Bearer ${secrets[who]}`) return Response.json({ error: 'unauthorized' }, { status: 401 });
       try {
         if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), decodeURIComponent(req.headers.get('x-eda-cwd') ?? ''));
         const result = await h(req, doc, req.params ?? {});
@@ -550,7 +552,11 @@ export function startServer(opts: ServeOptions) {
         }),
       },
       // ---- the MCP server's side: read, suggest, reply ----
-      '/api/ai/map': { GET: api(false, (_req, d) => ({ outline: toOutlineForAi(d), dir: opts.dir })) },
+      '/api/ai/map': { GET: api(false, (_req, d) => ({ outline: toOutlineForAi(d), dir: opts.dir }), 'ai') },
+      // The channel's reads: which sessions a map has, and the chat to push. The person's
+      // `/api/state` also carries kaneo statuses, which the AI has no use for.
+      '/api/ai/rev': { GET: api(false, () => ({ rev, sessions: doc.sessions.map((s) => s.id) }), 'ai') },
+      '/api/ai/state': { GET: api(false, (_req, d) => ({ rev, doc: d }), 'ai') },
 
       '/api/ai/suggest': {
         POST: api(true, async (req, d) => {
@@ -562,7 +568,7 @@ export function startServer(opts: ServeOptions) {
           }
           const text = str(b['text']);
           return suggest(d, { kind: 'edit', nodeId: str(b['nodeId']) ?? '', ...(text === undefined ? {} : { text }), urls, reason }, aiSource(req));
-        }),
+        }, 'ai'),
       },
       '/api/ai/delivered': {
         POST: api(true, async (req, d) => {
@@ -570,13 +576,13 @@ export function startServer(opts: ServeOptions) {
           const s = d.sessions.find((x) => x.id === aiSource(req).session);
           if (s) s.delivered = Math.max(s.delivered ?? 0, Number(id.slice(1)) || 0);
           return { ok: true };
-        }),
+        }, 'ai'),
       },
       '/api/ai/reply': {
         POST: api(true, async (req, d) => {
           const b = await body(req);
           return say(d, 'ai', str(b['text']) ?? '', str(b['nodeId']), aiSource(req).session);
-        }),
+        }, 'ai'),
       },
     },
     fetch: () => new Response('not found', { status: 404 }),
