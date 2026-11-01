@@ -72,7 +72,8 @@ const kaneo = Bun.serve({
     const u = new URL(req.url);
     const body = req.method === 'POST' ? await req.json() : undefined;
     seen.push({ method: req.method, path: u.pathname + u.search, auth: req.headers.get('authorization'), body });
-    if (req.headers.get('authorization') !== 'Bearer K') return Response.json({ message: 'unauthorized' }, { status: 401 });
+    // KC is the key the keyCommand tests print, so a key that reached a child can be told from K.
+    if (req.headers.get('authorization') !== 'Bearer K' && req.headers.get('authorization') !== 'Bearer KC') return Response.json({ message: 'unauthorized' }, { status: 401 });
     if (req.method === 'GET' && u.pathname === '/api/project' && u.searchParams.get('workspaceId') === 'W1') {
       return Response.json([{ id: 'p1', name: 'eda' }, { id: 'p2', name: 'ccx' }]);
     }
@@ -833,7 +834,7 @@ test('with no kaneo host, a KANEO_API_KEY that cannot go in a header is not comp
 
 test('the key read through keyCommand is not handed to the dispatched command', async () => {
   tasks.set('t9', { id: 't9', number: 49, title: 'x', description: '', status: 'to-do', projectId: 'p1' });
-  const cfg = { kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand: ['sh', '-c', 'echo K'] }, spawn: { command: ['sh', '-c', 'echo "key=[$KANEO_API_KEY]"'] } };
+  const cfg = { kaneo: { host: kaneoUrl, workspace: 'W1', keyCommand: ['sh', '-c', 'echo KC'] }, spawn: { command: ['sh', '-c', 'echo "key=[$KANEO_API_KEY]"'] } };
   await withServer(cfg, null, async (call) => {
     await call('POST', `/api/nodes/n1/tasks`, { url: 'http://k/dashboard/workspace/W1/project/p1/task/t9' });
     const { status, json } = await call('POST', '/api/nodes/n1/tasks/t9/dispatch', { repo: 'o/r' });
@@ -841,18 +842,21 @@ test('the key read through keyCommand is not handed to the dispatched command', 
     // Not `key=[]`: the child gets the env eda started with (Bun.spawn without `env` ignores later
     // process.env writes), which may hold the runner's own key. What must not be there is keyCommand's.
     expect(json.output).toContain('key=[');
-    expect(json.output.split('\n')).not.toContain('key=[K]');
+    expect(json.output.split('\n')).not.toContain('key=[KC]');
   });
 });
 
 test("keyCommand's own stderr never reaches eda serve's stderr", async () => {
   const cfgHome = temp('eda-keycmd-cfg-');
   mkdirSync(join(cfgHome, 'eda'), { recursive: true });
-  writeFileSync(join(cfgHome, 'eda', 'config.json'), JSON.stringify({ kaneo: { host: kaneoUrl, keyCommand: ['sh', '-c', 'echo eda-marker-on-stderr >&2; echo K'] } }));
+  // A cwd of its own: bun reads a .env from the cwd, and a key there would stand in for keyCommand's.
+  const cwd = temp('eda-keycmd-cwd-');
+  const ran = join(cwd, 'keycommand-ran');
+  writeFileSync(join(cfgHome, 'eda', 'config.json'), JSON.stringify({ kaneo: { host: kaneoUrl, keyCommand: ['sh', '-c', `touch ${ran}; echo eda-marker-on-stderr >&2; echo K`] } }));
   const env: Record<string, string> = { ...(process.env as Record<string, string>), XDG_CONFIG_HOME: cfgHome, EDA_HOME: temp('eda-keycmd-home-') };
   delete env['KANEO_API_KEY'];
   delete env['CLAUDE_CODE_SESSION_ID'];
-  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', 'src', 'cli.ts'), 'serve', temp('eda-keycmd-map-'), '--host', '127.0.0.1'], { env, stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', 'src', 'cli.ts'), 'serve', temp('eda-keycmd-map-'), '--host', '127.0.0.1'], { env, cwd, stdout: 'pipe', stderr: 'pipe' });
   const errText = new Response(proc.stderr).text();
   try {
     const reader = proc.stdout.getReader();
@@ -871,6 +875,7 @@ test("keyCommand's own stderr never reaches eda serve's stderr", async () => {
     proc.kill();
   }
   await proc.exited;
+  expect(existsSync(ran)).toBe(true);
   expect(await errText).not.toContain('eda-marker-on-stderr');
 });
 
