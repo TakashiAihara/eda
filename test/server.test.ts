@@ -102,7 +102,7 @@ test('a hand edit of map.md is not read: the map and the candidate list stay, an
 });
 
 test('starting on an existing map writes map.md again, from eda.json', () => {
-  const d = mkdtempSync(join(tmpdir(), 'eda-md-'));
+  const d = temp('eda-md-');
   const first = startServer({ dir: d, host: '127.0.0.1', port: 0, title: 'trip' });
   first.stop();
   writeFileSync(join(d, 'map.md'), '# stale\n');
