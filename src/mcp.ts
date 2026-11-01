@@ -56,6 +56,7 @@ export class Client {
       },
     });
     const json = (await res.json().catch(() => ({ error: `${res.status} from ${t.base}${path}` }))) as Record<string, unknown>;
+    if (res.status === 401) throw new Error(`unauthorized: ${t.base} refused this session's token; an eda serve started before the AI got its own token does, so restart it`);
     if (!res.ok) throw new Error(String(json['error'] ?? res.statusText));
     return json;
   }
@@ -67,6 +68,7 @@ export class Client {
    * else started — the server records the session from the request header.
    */
   async targets(dir?: string): Promise<Target[]> {
+    this.refused = [];
     const running = this.instances().flatMap((i) => {
       const base = localBase(i.host, i.port);
       return base === undefined ? [] : [{ dir: i.dir, base }];
@@ -84,17 +86,25 @@ export class Client {
         // /api/ai/rev, not /api/ai/state: this runs for every running map on every channel pass.
         const s = (await this.call(r, '/api/ai/rev')) as { sessions: string[] };
         if (s.sessions.includes(this.session)) mine.push(r);
-      } catch {
-        /* a server going down between the listing and the call */
+      } catch (err) {
+        // A map that turns this token down is not one going down: an eda serve from before the
+        // AI got its own token (#2) answers every AI call so, and says nothing else about why.
+        if (err instanceof Error && err.message.startsWith('unauthorized:')) this.refused.push(r.dir);
       }
     }
     return mine;
   }
 
+  /** The maps the last `targets()` found running that refused this session's token. */
+  refused: string[] = [];
+
   async one(dir?: string): Promise<Target> {
     const ts = await this.targets(dir);
     if (ts.length === 1) return ts[0]!;
     if (ts.length === 0) {
+      if (this.refused.length > 0) {
+        throw new Error(`no running map for this session; these refused its token, which an eda serve started before the AI token split does: ${this.refused.join(', ')}. Restart that eda serve.`);
+      }
       throw new Error(
         dir === undefined
           ? 'no running map for this session. Start one with `eda serve <dir> --title "<theme>"`, or pass `map`.'

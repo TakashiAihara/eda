@@ -74,9 +74,11 @@ A map is a directory:
 ## Security
 
 - Two tokens per host, each shared by every map on that host. `$EDA_HOME/token` is the person's (the browser's): it opens every route except `/api/ai/*`. `$EDA_HOME/ai-token` is the MCP server's: it opens only `/api/ai/*` (read the map, suggest, reply). Anyone holding a map URL can open every map running on that host.
-- The split keeps an AI that uses only its MCP tools from adopting, deleting or editing. It does not stop a session with a shell under the same OS user: it can read `$EDA_HOME/token`, and it sees the URL `eda serve` prints when it starts the map.
+- What the split buys: the MCP server's process holds a credential that cannot adopt, delete or edit, so a fault in it, or a future MCP server that runs elsewhere, does not carry the person's power. It does not stop a Claude Code session with a shell under the same OS user: it can read `$EDA_HOME/token`, and when it starts the map (as the MCP instructions ask) it sees the person's token in the URL `eda serve` prints.
+- The `x-eda-session` header is taken as sent: any holder of `ai-token` can act as any session (use its suggestion slots, mark its messages delivered).
 - `eda serve` binds `0.0.0.0` and speaks plain HTTP: the map is reachable from the whole LAN, and the token travels unencrypted. Pass `--host 127.0.0.1` to keep it local, and do not expose the port to the internet.
-- To revoke a token, stop the running maps, delete `$EDA_HOME/token` or `$EDA_HOME/ai-token`, and start them again; a new one is created. Restart the Claude Code sessions too after deleting `ai-token`.
+- To revoke a token, stop the running maps, delete `$EDA_HOME/token` or `$EDA_HOME/ai-token`, and start them again; a new one is created. Running MCP servers read `ai-token` on every call, so they pick up a new one without a restart.
+- Upgrading from the one-token version: restart every running `eda serve` (an old one refuses the new MCP server's calls, and the MCP tools name it), and delete `$EDA_HOME/token` once so the person's token every MCP process held so far stops working.
 
 ## Contributing
 

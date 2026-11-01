@@ -207,17 +207,40 @@ test('the two tokens are different and each opens only its own routes', async ()
   const call = (path: string, secret: string, method = 'GET', body?: unknown) =>
     fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json', 'x-eda-session': 'S1' }, ...(body === undefined || method === 'GET' ? {} : { body: JSON.stringify(body) }) });
   // The person's token reaches none of the AI routes, so the browser side cannot speak as the AI.
-  for (const [path, method] of [['/api/ai/map', 'GET'], ['/api/ai/rev', 'GET'], ['/api/ai/state', 'GET'], ['/api/ai/suggest', 'POST'], ['/api/ai/reply', 'POST'], ['/api/ai/delivered', 'POST']] as const) {
+  // With the AI's, each answers as it does for an empty body: past the auth, into the handler.
+  for (const [path, method, past] of [['/api/ai/map', 'GET', 200], ['/api/ai/rev', 'GET', 200], ['/api/ai/state', 'GET', 200], ['/api/ai/suggest', 'POST', 404], ['/api/ai/reply', 'POST', 400], ['/api/ai/delivered', 'POST', 200]] as const) {
     expect([path, (await call(path, token(), method, {})).status]).toEqual([path, 401]);
-    expect([path, (await call(path, aiToken(), method, {})).status]).not.toEqual([path, 401]);
+    expect([path, (await call(path, aiToken(), method, {})).status]).toEqual([path, past]);
   }
-  // The AI's token reaches none of the person's: no adopting, deleting, editing or reading the UI state.
+  expect((await call('/api/rev', token())).status).toBe(200);
+  expect((await call('/api/state', token())).status).toBe(200);
+  // The AI's token reaches none of the person's: no adopting, deleting, editing, linking,
+  // dispatching or reading the UI state. Every person route is listed.
   const s = (await (await call('/api/ai/suggest', aiToken(), 'POST', { kind: 'add', parentId: 'n1', text: 'by token', reason: '' })).json()) as { id: string };
-  for (const [path, method] of [['/api/state', 'GET'], ['/api/rev', 'GET'], [`/api/suggestions/${s.id}/accept`, 'POST'], [`/api/suggestions/${s.id}/reject`, 'POST'], ['/api/nodes', 'POST'], ['/api/nodes/n1', 'PATCH'], ['/api/nodes/n1', 'DELETE'], ['/api/chat', 'POST']] as const) {
+  const personRoutes = [
+    ['/api/state', 'GET'], ['/api/rev', 'GET'], ['/api/nodes', 'POST'], ['/api/nodes/n1', 'PATCH'], ['/api/nodes/n1', 'DELETE'],
+    ['/api/nodes/n1/urls', 'POST'], ['/api/nodes/n1/urls', 'DELETE'], ['/api/nodes/n1/markers', 'POST'], ['/api/nodes/n1/tasks', 'POST'], ['/api/nodes/n1/tasks', 'DELETE'],
+    ['/api/kaneo/projects', 'GET'], ['/api/nodes/n1/kaneo-task', 'POST'], ['/api/nodes/n1/tasks/t1/dispatch', 'POST'],
+    [`/api/suggestions/${s.id}/accept`, 'POST'], [`/api/suggestions/${s.id}/reject`, 'POST'], ['/api/chat', 'POST'],
+  ] as const;
+  for (const [path, method] of personRoutes) {
     expect([path, method, (await call(path, aiToken(), method, {})).status]).toEqual([path, method, 401]);
   }
   expect((await person('GET', '/api/state')).json.doc.suggestions.some((x: any) => x.id === s.id)).toBe(true);
   await person('POST', `/api/suggestions/${s.id}/reject`, {});
+});
+
+test('a map that refuses the session token is named, not reported as no map at all', async () => {
+  const registry = () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }];
+  // The token an eda serve from before the split would answer with: the person's, or nothing it knows.
+  const stale = new Client('S1', '/w', registry, () => 'stale-token');
+  await expect(runTool(stale, 'read_map', {})).rejects.toThrow(`these refused its token, which an eda serve started before the AI token split does: ${dir}. Restart that eda serve.`);
+  await expect(runTool(stale, 'read_map', { map: dir })).rejects.toThrow(/^unauthorized: .* refused this session's token; .*restart it$/);
+  // What the last look found is not carried into the next: a map named that is not running is just that.
+  await expect(runTool(stale, 'read_map', {})).rejects.toThrow(/refused its token/);
+  await expect(runTool(stale, 'read_map', { map: '/nowhere' })).rejects.toThrow(/^no running map at \/nowhere$/);
+  // A map that is just not this session's is still the plain answer.
+  await expect(runTool(new Client('S-nobody', '/w', registry), 'read_map', {})).rejects.toThrow(/^no running map for this session\. Start one/);
 });
 
 test('an AI call without a session is refused', async () => {
