@@ -85,7 +85,7 @@ export class Client {
   }
 
   /** `targets()`, and the running maps that turned this session's calls down (`StaleServer`). */
-  private async scan(dir?: string): Promise<{ mine: Target[]; stale: string[] }> {
+  async scan(dir?: string): Promise<{ mine: Target[]; stale: string[] }> {
     const running = this.instances().flatMap((i) => {
       const base = localBase(i.host, i.port);
       return base === undefined ? [] : [{ dir: i.dir, base }];
@@ -272,9 +272,18 @@ export async function runMcp(): Promise<void> {
     await client.call(t, '/api/ai/delivered', { method: 'POST', body: JSON.stringify({ chatId: `c${pos}` }) });
     acked.set(t.dir, pos);
   };
+  // Maps already named as not taking this session's calls, so each is said once per eda mcp.
+  const named = new Set<string>();
   for (;;) {
     try {
-      for (const t of await client.targets()) {
+      const { mine, stale } = await client.scan();
+      // Otherwise the person's lines in such a map never arrive, and nothing says why.
+      for (const d of stale) {
+        if (named.has(d)) continue;
+        named.add(d);
+        console.error(`eda: the map at ${d} does not take this session's calls, so its chat does not reach the session. ${STALE_HINT}`);
+      }
+      for (const t of mine) {
         try {
           // A recorded position that failed to save is retried every pass until it sticks;
           // otherwise a restart would replay what was already delivered.

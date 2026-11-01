@@ -435,6 +435,38 @@ test('eda mcp pushes the person\'s chat into the session as a channel event', as
   }
 }, 15000);
 
+test('eda mcp names a map that does not take its calls once on stderr, however many passes go by', async () => {
+  const { Client: McpClient } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const { registerInstance } = await import('../src/store.ts');
+  // As an eda serve from before the AI got its own token answers /api/ai/rev.
+  const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('not found', { status: 404 }) });
+  // A live pid for its record that is not this process's, which holds the record of the map above.
+  const holder = Bun.spawn(['sleep', '30']);
+  const unregister = registerInstance({ pid: holder.pid, dir: '/old-map', host: '127.0.0.1', port: old.port!, session: 'S1', startedAt: '' });
+  const transport = new StdioClientTransport({
+    command: 'bun',
+    args: [join(import.meta.dir, '../src/cli.ts'), 'mcp'],
+    env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'S1' } as Record<string, string>,
+    stderr: 'pipe',
+  });
+  let err = '';
+  transport.stderr?.on('data', (b: Buffer) => (err += b.toString()));
+  const c = new McpClient({ name: 't', version: '0' });
+  try {
+    await c.connect(transport);
+    // Three passes at 2 s each.
+    await Bun.sleep(6500);
+    const lines = err.split('\n').filter((l) => l.includes('/old-map'));
+    expect(lines).toEqual([`eda: the map at /old-map does not take this session's calls, so its chat does not reach the session. An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.`]);
+  } finally {
+    await c.close();
+    unregister();
+    holder.kill();
+    old.stop(true);
+  }
+}, 15000);
+
 test('a session whose cwd is not ASCII can reach its map', async () => {
   const jp = new Client('S7', '/tmp/日本語', () => [{ pid: 1, dir, host: '127.0.0.1', port: server.port!, startedAt: '' }]);
   expect(await runTool(jp, 'read_map', { map: dir })).toContain('[n1]');
