@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 const made: string[] = [];
 const temp = (prefix: string): string => {
@@ -127,21 +127,56 @@ test('a symlinked map.md and eda.json are written through, and keep the mode of 
   const vault = temp('eda-vault-');
   const first = startServer({ dir: d, host: '127.0.0.1', port: 0, title: 'trip' });
   first.stop();
-  // Both files moved into another directory and linked back, as a vault-kept map would be.
+  // Both files moved into another directory and linked back, as a vault-kept map would be: one
+  // link absolute, one relative. 0606 keeps other-write, which the usual umasks (022 / 002 / 027)
+  // take off, so it survives only if the mode is set whole after the write.
   for (const f of ['map.md', 'eda.json']) {
     renameSync(join(d, f), join(vault, f));
-    chmodSync(join(vault, f), 0o640);
-    symlinkSync(join(vault, f), join(d, f));
+    chmodSync(join(vault, f), 0o606);
   }
+  symlinkSync(join(vault, 'map.md'), join(d, 'map.md'));
+  symlinkSync(join('..', basename(vault), 'eda.json'), join(d, 'eda.json'));
   const doc = loadMap(d)!;
   addChild(doc, 'n1', 'hotel');
   saveMap(d, doc);
   for (const f of ['map.md', 'eda.json']) {
     expect([f, lstatSync(join(d, f)).isSymbolicLink()]).toEqual([f, true]);
-    expect([f, statSync(join(vault, f)).mode & 0o777]).toEqual([f, 0o640]);
+    expect([f, statSync(join(vault, f)).mode & 0o777]).toEqual([f, 0o606]);
   }
   expect(readFileSync(join(vault, 'map.md'), 'utf8')).toBe('# trip\n\n- hotel\n');
   expect(loadMap(vault)!.root.children.map((c) => c.text)).toEqual(['hotel']);
+  // Nothing half-written left beside the files.
+  expect(readdirSync(vault).sort()).toEqual(['eda.json', 'map.md']);
+});
+
+test('a map whose linked files are not there is refused at start, and its links are left as they were', async () => {
+  const { lstatSync, readlinkSync, symlinkSync } = await import('node:fs');
+  const d = temp('eda-dangling-');
+  const gone = join(temp('eda-unmounted-'), 'not-here');
+  symlinkSync(join(gone, 'eda.json'), join(d, 'eda.json'));
+  symlinkSync(join(gone, 'map.md'), join(d, 'map.md'));
+  expect(() => startServer({ dir: d, host: '127.0.0.1', port: 0 })).toThrow(`${join(d, 'eda.json')} is a symlink to nothing`);
+  expect(lstatSync(join(d, 'eda.json')).isSymbolicLink()).toBe(true);
+  expect(readlinkSync(join(d, 'map.md'))).toBe(join(gone, 'map.md'));
+  // map.md alone dangling, with eda.json there: still refused, not written over.
+  const d2 = temp('eda-dangling-md-');
+  startServer({ dir: d2, host: '127.0.0.1', port: 0, title: 't' }).stop();
+  rmSync(join(d2, 'map.md'));
+  symlinkSync(join(gone, 'map.md'), join(d2, 'map.md'));
+  expect(() => startServer({ dir: d2, host: '127.0.0.1', port: 0 })).toThrow(`${join(d2, 'map.md')} is a symlink to nothing`);
+  expect(readlinkSync(join(d2, 'map.md'))).toBe(join(gone, 'map.md'));
+});
+
+test('a map.md that is not a regular file is not replaced', async () => {
+  const { lstatSync } = await import('node:fs');
+  const d = temp('eda-fifo-');
+  startServer({ dir: d, host: '127.0.0.1', port: 0, title: 't' }).stop();
+  rmSync(join(d, 'map.md'));
+  Bun.spawnSync(['mkfifo', join(d, 'map.md')]);
+  expect(lstatSync(join(d, 'map.md')).isFIFO()).toBe(true);
+  expect(() => startServer({ dir: d, host: '127.0.0.1', port: 0 })).toThrow(`${join(d, 'map.md')} is not a regular file`);
+  expect(lstatSync(join(d, 'map.md')).isFIFO()).toBe(true);
+  expect(readdirSync(d).filter((f) => f.endsWith('.tmp'))).toEqual([]);
 });
 
 test('a directory with a map.md but no eda.json is refused, and the map.md is left as it was', () => {

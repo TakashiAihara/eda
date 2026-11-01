@@ -7,9 +7,9 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { MapError, type MapDoc, newMap, toMarkdown } from './map.ts';
 
 export const JSON_FILE = 'eda.json';
@@ -21,19 +21,39 @@ export function edaHome(): string {
 
 /**
  * Replace a file whole, so a reader never sees half of it. Through a symlink to the file it names:
- * renaming over the link would leave a plain file here and the file it pointed at stale (#36). An
- * existing file keeps its mode, which a fresh temp file would not carry.
+ * renaming over the link would leave a plain file here and the file it pointed at stale (#36).
+ * An existing file keeps its mode, from the moment the temp file exists; its owner, ACLs and
+ * extended attributes are not carried over.
  *
- * shortcut: a symlink that points nowhere is replaced by a plain file; resolve it by hand if a
- * dangling link ever needs to be written through.
+ * Refused rather than written: a symlink that points nowhere (its file is somewhere not mounted,
+ * and writing here would split the map from it) and a path that is not a regular file (a FIFO, a
+ * device), which a rename would replace.
  */
 function writeAtomic(path: string, body: string): void {
+  if (!existsSync(path) && isLink(path)) throw new MapError(`${path} is a symlink to nothing; eda will not write in its place`);
   const target = existsSync(path) ? realpathSync(path) : path;
-  const tmp = `${target}.${process.pid}.tmp`;
-  writeFileSync(tmp, body);
-  if (existsSync(target)) chmodSync(tmp, statSync(target).mode & 0o7777);
-  renameSync(tmp, target);
+  const mode = existsSync(target) ? statSync(target) : undefined;
+  if (mode !== undefined && !mode.isFile()) throw new MapError(`${path} is not a regular file; eda will not replace it`);
+  // A dot name, so a tool syncing the target's directory does not pick the half-written file up.
+  const tmp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(tmp, body, mode === undefined ? undefined : { mode: mode.mode & 0o7777 });
+    // writeFileSync's mode is cut by the umask; set it whole.
+    if (mode !== undefined) chmodSync(tmp, mode.mode & 0o7777);
+    renameSync(tmp, target);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
 }
+
+const isLink = (path: string): boolean => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
 
 export function loadMap(dir: string): MapDoc | undefined {
   const p = join(dir, JSON_FILE);
@@ -47,6 +67,8 @@ export function saveMap(dir: string, doc: MapDoc): void {
 
 export function openMap(dir: string, title?: string): MapDoc {
   mkdirSync(dir, { recursive: true });
+  // An eda.json linked somewhere not there now reads as no map; the save of a fresh one is what
+  // refuses it (see writeAtomic), before anything is written.
   const doc = loadMap(dir);
   if (doc) return doc;
   // A map.md that is not eda's export: writing the new map would replace a person's file, and
