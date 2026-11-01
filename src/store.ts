@@ -34,7 +34,8 @@ function landing(path: string): { target: string; mode?: number } {
   if (!existsSync(target)) return { target };
   const st = statSync(target);
   if (!st.isFile()) throw new MapError(`${path} is not a regular file; eda will not replace it`);
-  return { target, mode: st.mode & 0o7777 };
+  // Permission bits only: a set-id or sticky bit on a data file is not something to carry on.
+  return { target, mode: st.mode & 0o777 };
 }
 
 /**
@@ -44,7 +45,8 @@ function landing(path: string): { target: string; mode?: number } {
  */
 function writeAtomic(path: string, body: string, mode?: number): void {
   // A dot name, so a tool that skips dotfiles (Obsidian) does not pick the half-written file up.
-  // Random and created exclusively, so nothing planted at the name is written through.
+  // Random and created exclusively, so nothing planted at the name is written through (not pinned
+  // by a test: the name cannot be guessed to plant something there).
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
   try {
     writeFileSync(tmp, body, { flag: 'wx', ...(mode === undefined ? {} : { mode }) });
