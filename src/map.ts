@@ -422,12 +422,18 @@ export function say(doc: MapDoc, from: 'human' | 'ai', text: string, nodeId?: st
 
 // ---- map.md -------------------------------------------------------------
 
-/** `# root`, then two-space nested bullets: the shape Markmap and Obsidian open as-is. */
+/**
+ * `# root`, then two-space nested bullets: the shape Markmap and Obsidian open as-is. A node's URLs
+ * follow its text as links. Its note is left out: a quoted child would change the tree's shape in
+ * Markmap (#35).
+ */
 export function toMarkdown(root: Node): string {
-  const lines = [`# ${root.text}`, ''];
+  const line = (n: Node): string =>
+    [n.text, ...n.urls.map((u) => `[${(u.title ?? 'link').replace(/[\\[\]]/g, '\\$&')}](${u.url.replace(/[()]/g, '\\$&')})`)].join(' ');
+  const lines = [`# ${line(root)}`, ''];
   const walk = (n: Node, depth: number): void => {
     for (const c of n.children) {
-      lines.push(`${'  '.repeat(depth)}- ${c.text}`);
+      lines.push(`${'  '.repeat(depth)}- ${line(c)}`);
       walk(c, depth + 1);
     }
   };
