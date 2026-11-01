@@ -16,7 +16,7 @@ const USAGE = `eda — a mind map you grow one node at a time with an AI that ca
   eda import <file.xmind> <dir> [--sheet <n>]                 make a new map in <dir> from an XMind file
   eda list                                                    running maps
   eda mcp                                                     MCP server + channel, spawned by Claude Code
-  eda token                                                   the token the browser asks for`;
+  eda token                                                   the person's token, the one the browser asks for`;
 
 /** The address a person on the LAN can open. Container bridges are skipped by interface name, not by address range. */
 function lanIp(): string {

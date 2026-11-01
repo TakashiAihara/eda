@@ -20,7 +20,7 @@ process.env['EDA_HOME'] = home;
 process.env['XDG_CONFIG_HOME'] = home;
 const { startServer } = await import('../src/server.ts');
 const { Client, describe: describeChat, runTool, undelivered } = await import('../src/mcp.ts');
-const { loadMap, token } = await import('../src/store.ts');
+const { aiToken, loadMap, token } = await import('../src/store.ts');
 const { toMarkdown } = await import('../src/map.ts');
 
 const dir = temp('eda-map-');
@@ -202,10 +202,67 @@ test('a non-object JSON body is read as empty (no node named), not a 500', async
   expect(r.status).toBe(404);
 });
 
+test('the two tokens are different and each opens only its own routes', async () => {
+  expect(aiToken()).not.toBe(token());
+  const call = (path: string, secret: string, method = 'GET', body?: unknown) =>
+    fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json', 'x-eda-session': 'S1' }, ...(body === undefined || method === 'GET' ? {} : { body: JSON.stringify(body) }) });
+  // The person's token reaches none of the AI routes, so the browser side cannot speak as the AI.
+  // With the AI's, each answers as it does for an empty body: past the auth, into the handler.
+  for (const [path, method, past] of [['/api/ai/map', 'GET', 200], ['/api/ai/rev', 'GET', 200], ['/api/ai/state', 'GET', 200], ['/api/ai/suggest', 'POST', 404], ['/api/ai/reply', 'POST', 400], ['/api/ai/delivered', 'POST', 200]] as const) {
+    expect([path, (await call(path, token(), method, {})).status]).toEqual([path, 401]);
+    expect([path, (await call(path, aiToken(), method, {})).status]).toEqual([path, past]);
+  }
+  expect((await call('/api/rev', token())).status).toBe(200);
+  expect((await call('/api/state', token())).status).toBe(200);
+  // The AI's token reaches none of the person's: no adopting, deleting, editing, linking,
+  // dispatching or reading the UI state. Every person route is listed.
+  const s = (await (await call('/api/ai/suggest', aiToken(), 'POST', { kind: 'add', parentId: 'n1', text: 'by token', reason: '' })).json()) as { id: string };
+  const personRoutes = [
+    ['/api/state', 'GET'], ['/api/rev', 'GET'], ['/api/nodes', 'POST'], ['/api/nodes/n1', 'PATCH'], ['/api/nodes/n1', 'DELETE'],
+    ['/api/nodes/n1/urls', 'POST'], ['/api/nodes/n1/urls', 'DELETE'], ['/api/nodes/n1/markers', 'POST'], ['/api/nodes/n1/tasks', 'POST'], ['/api/nodes/n1/tasks', 'DELETE'],
+    ['/api/kaneo/projects', 'GET'], ['/api/nodes/n1/kaneo-task', 'POST'], ['/api/nodes/n1/tasks/t1/dispatch', 'POST'],
+    [`/api/suggestions/${s.id}/accept`, 'POST'], [`/api/suggestions/${s.id}/reject`, 'POST'], ['/api/chat', 'POST'],
+  ] as const;
+  for (const [path, method] of personRoutes) {
+    expect([path, method, (await call(path, aiToken(), method, {})).status]).toEqual([path, method, 401]);
+  }
+  expect((await person('GET', '/api/state')).json.doc.suggestions.some((x: any) => x.id === s.id)).toBe(true);
+  await person('POST', `/api/suggestions/${s.id}/reject`, {});
+});
+
+test('a map that does not take the session token is named, not reported as no map at all', async () => {
+  const hint = 'An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.';
+  // As an eda serve from before the split answers /api/ai/rev: no such route, Bun's plain 404.
+  // (Its /api/ai/map, suggest and reply exist and answer 401, as the wrong-token client below gets.)
+  const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('not found', { status: 404 }) });
+  // Nothing listening: a map that went down, which is not the same answer.
+  const down = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('') });
+  const downPort = down.port!;
+  down.stop(true);
+  try {
+    const at = (d: string, port: number) => ({ pid: 1, dir: d, host: '127.0.0.1', port, startedAt: '' });
+    // A token this server does not know: its 401.
+    const wrong = new Client('S1', '/w', () => [at(dir, server.port!)], () => 'stale-token');
+    await expect(runTool(wrong, 'read_map', {})).rejects.toThrow(`no running map for this session; these do not take its calls: ${dir}. ${hint}`);
+    await expect(runTool(wrong, 'read_map', { map: dir })).rejects.toThrow(`the map at ${dir} does not take this session's calls. ${hint}`);
+    const pre = new Client('S1', '/w', () => [at('/old-map', old.port!), at('/down-map', downPort)]);
+    await expect(runTool(pre, 'read_map', {})).rejects.toThrow(`no running map for this session; these do not take its calls: /old-map. ${hint}`);
+    // A map named that is not running is just that, whatever the look before found.
+    await expect(runTool(wrong, 'read_map', { map: '/nowhere' })).rejects.toThrow(/^no running map at \/nowhere$/);
+    // A map that is just not this session's, or down, is still the plain answer.
+    await expect(runTool(new Client('S-nobody', '/w', () => [at(dir, server.port!), at('/down-map', downPort)]), 'read_map', {})).rejects.toThrow(/^no running map for this session\. Start one/);
+    // eda's own 404 (a JSON error from a handler) is not a missing route.
+    const own = await runTool(claude, 'suggest_edit', { node_id: 'n-none', text: 'x', reason: '' }).catch((e: Error) => e.message);
+    expect(own).toBe('no node n-none');
+  } finally {
+    old.stop(true);
+  }
+});
+
 test('an AI call without a session is refused', async () => {
   const r = await fetch(`${base}/api/ai/suggest`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${aiToken()}`, 'content-type': 'application/json' },
     body: JSON.stringify({ kind: 'add', parentId: 'n1', text: 'x', reason: '' }),
   });
   expect(r.status).toBe(400);
@@ -312,7 +369,7 @@ test('a person sets and clears a marker; the AI reads it, and its suggestions ca
   // An AI edit carrying markers: the field is not read, so adopting it changes none.
   const r = await fetch(`${base}/api/ai/suggest`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json', 'x-eda-session': 'S9' },
+    headers: { authorization: `Bearer ${aiToken()}`, 'content-type': 'application/json', 'x-eda-session': 'S9' },
     body: JSON.stringify({ kind: 'edit', nodeId: n.id, text: 'marked!', markers: ['flag'], reason: 'r' }),
   });
   const s = (await r.json()) as { id: string };

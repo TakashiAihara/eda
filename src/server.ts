@@ -28,7 +28,7 @@ import {
   taskDescription,
   toOutlineForAi,
 } from './map.ts';
-import { config, openMap, saveMap, token } from './store.ts';
+import { aiToken, config, openMap, saveMap, token } from './store.ts';
 
 export type ServeOptions = { dir: string; host: string; port: number; title?: string; session?: string; cwd?: string; kaneoPollMs?: number; keyCommandMs?: number };
 
@@ -68,7 +68,9 @@ function keyFromCommand(raw: unknown, ceilingMs: number): string {
 
 export function startServer(opts: ServeOptions) {
   const doc = openMap(opts.dir, opts.title);
-  const secret = token();
+  // Two credentials, each good for its own routes only: the person's for everything in the UI,
+  // the MCP server's for `/api/ai/*` (#2). Neither opens the other's.
+  const secrets = { person: token(), ai: aiToken() };
   // Starts from the clock so a browser left open across a restart sees a new value.
   let rev = Date.now();
   const cfg = config();
@@ -126,11 +128,18 @@ export function startServer(opts: ServeOptions) {
     }
   };
 
-  /** Wrap a handler: auth, save on success, errors as JSON. */
+  /**
+   * Wrap a handler: auth, save on success, errors as JSON. Which token a route takes comes from
+   * its path, not from each route: `/api/ai/*` is the MCP server's, everything else the person's,
+   * so a route is not put on the wrong side by forgetting an argument. The path is the one Bun
+   * hands over, with `..` already resolved: a route with `ai/` further down its path would need
+   * its side named by hand.
+   */
   const api =
     (write: boolean, h: Handler) =>
     async (req: Request & { params?: Record<string, string> }): Promise<Response> => {
-      if (req.headers.get('authorization') !== `Bearer ${secret}`) return Response.json({ error: 'unauthorized' }, { status: 401 });
+      const who = new URL(req.url).pathname.startsWith('/api/ai/') ? 'ai' : 'person';
+      if (req.headers.get('authorization') !== `Bearer ${secrets[who]}`) return Response.json({ error: 'unauthorized' }, { status: 401 });
       try {
         if (req.headers.get('x-eda-attach') === '1') remember(req.headers.get('x-eda-session'), decodeURIComponent(req.headers.get('x-eda-cwd') ?? ''));
         const result = await h(req, doc, req.params ?? {});
@@ -226,7 +235,8 @@ export function startServer(opts: ServeOptions) {
 
   /**
    * Read every linked task. A change bumps rev, and the browser's own 1.5 s poll redraws:
-   * that poll is the whole channel out, and this is the only thing that uses it.
+   * that poll is the whole channel out to the browser. The MCP channel sees the same rev and
+   * reads the map once more for it, finding nothing new to push.
    */
   const refreshTasks = async (): Promise<void> => {
     const ids = linkedIds();
@@ -341,6 +351,7 @@ export function startServer(opts: ServeOptions) {
     return { by: 'ai' as const, session };
   };
 
+  const revOf = () => ({ rev, sessions: doc.sessions.map((s) => s.id) });
   const server = Bun.serve({
     hostname: opts.host,
     port: opts.port,
@@ -350,7 +361,7 @@ export function startServer(opts: ServeOptions) {
       '/api/state': {
         GET: api(false, () => ({ rev, dir: opts.dir, doc, kaneo, taskStatus })),
       },
-      '/api/rev': { GET: api(false, () => ({ rev, sessions: doc.sessions.map((s) => s.id) })) },
+      '/api/rev': { GET: api(false, revOf) },
       '/api/nodes': {
         POST: api(true, async (req, d) => {
           const b = await body(req);
@@ -375,7 +386,7 @@ export function startServer(opts: ServeOptions) {
         DELETE: api(true, async (req, d, p) => removeUrl(d, p['id']!, str((await body(req))['url']) ?? '')),
       },
       // A person's route: the MCP server offers no tool that reaches it (D-01: markers are the person's
-      // own sorting). The token is shared with the AI side, as for adoption; see issue #2.
+      // own sorting), and its token does not open it (#2).
       '/api/nodes/:id/markers': {
         POST: api(true, async (req, d, p) => {
           const b = await body(req);
@@ -388,8 +399,7 @@ export function startServer(opts: ServeOptions) {
         DELETE: api(true, async (req, d, p) => removeTask(d, p['id']!, str((await body(req))['task']) ?? '')),
       },
       // The person's own clicks: no MCP tool reaches these, the way a node becomes a task is
-      // theirs to take. The token is shared with the AI side as for adoption; see issue #2,
-      // which dispatch widens.
+      // theirs to take, and the MCP server's token does not open them (#2).
       '/api/kaneo/projects': {
         GET: api(false, async () => {
           needKaneo();
@@ -551,6 +561,10 @@ export function startServer(opts: ServeOptions) {
       },
       // ---- the MCP server's side: read, suggest, reply ----
       '/api/ai/map': { GET: api(false, (_req, d) => ({ outline: toOutlineForAi(d), dir: opts.dir })) },
+      // The channel's reads, the same as the browser's: which sessions a map has, and the whole
+      // map (the chat to push and the nodes it names). Not the kaneo statuses.
+      '/api/ai/rev': { GET: api(false, revOf) },
+      '/api/ai/state': { GET: api(false, (_req, d) => ({ rev, doc: d })) },
 
       '/api/ai/suggest': {
         POST: api(true, async (req, d) => {

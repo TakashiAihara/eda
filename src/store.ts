@@ -48,9 +48,22 @@ export function openMap(dir: string, title?: string): MapDoc {
 }
 
 
-/** One token per host, shared by the browser and the MCP server. Same model as akapen. */
+/** The person's token, one per host: what the browser presents. Same model as akapen. */
 export function token(): string {
-  const p = join(edaHome(), 'token');
+  return tokenIn('token');
+}
+
+/**
+ * The MCP server's token, one per host: it reaches only `/api/ai/*`, so a session that reads it
+ * can suggest and reply but not adopt, delete or edit (#2). A file of its own, not derived from
+ * the person's, so having one tells nothing about the other.
+ */
+export function aiToken(): string {
+  return tokenIn('ai-token');
+}
+
+function tokenIn(name: string): string {
+  const p = join(edaHome(), name);
   if (existsSync(p)) return readFileSync(p, 'utf8').trim();
   mkdirSync(edaHome(), { recursive: true });
   // Created complete and exclusively: two first starts must end up with one token.

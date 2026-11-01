@@ -13,7 +13,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { type Chat, MAX_PENDING, type MapDoc } from './map.ts';
-import { type Instance, readInstances, token } from './store.ts';
+import { aiToken, type Instance, readInstances } from './store.ts';
 
 const INTERVAL_MS = 2000;
 
@@ -33,12 +33,21 @@ export function localBase(host: string, port: unknown): string | undefined {
   return own.includes(host) ? `http://${host.includes(':') ? `[${host}]` : host}:${port}` : undefined;
 }
 
+const STALE_HINT = 'An eda serve started before the AI got its own token, or before ai-token was replaced, does that: restart it.';
+
+/** A running eda serve that turns this session's calls down: see `Client.call`. */
+class StaleServer extends Error {
+  constructor(dir: string) {
+    super(`the map at ${dir} does not take this session's calls. ${STALE_HINT}`);
+  }
+}
+
 export class Client {
   constructor(
     private readonly session: string,
     private readonly cwd: string,
     private readonly instances: () => Instance[] = readInstances,
-    private readonly secret: () => string = token,
+    private readonly secret: () => string = aiToken,
   ) {}
 
   async call(t: Target, path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -55,7 +64,12 @@ export class Client {
         ...(t.attach ? { 'x-eda-attach': '1' } : {}),
       },
     });
-    const json = (await res.json().catch(() => ({ error: `${res.status} from ${t.base}${path}` }))) as Record<string, unknown>;
+    const parsed = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    // A 401, or a 404 that is not eda's own JSON answer (the route is not there at all): an
+    // eda serve that does not take this session's calls, as one from before the AI got its
+    // own token (#2) does. Told apart from a map that is simply down.
+    if (res.status === 401 || (res.status === 404 && parsed === undefined)) throw new StaleServer(t.dir);
+    const json = parsed ?? { error: `${res.status} from ${t.base}${path}` };
     if (!res.ok) throw new Error(String(json['error'] ?? res.statusText));
     return json;
   }
@@ -67,6 +81,11 @@ export class Client {
    * else started — the server records the session from the request header.
    */
   async targets(dir?: string): Promise<Target[]> {
+    return (await this.scan(dir)).mine;
+  }
+
+  /** `targets()`, and the running maps that turned this session's calls down (`StaleServer`). */
+  private async scan(dir?: string): Promise<{ mine: Target[]; stale: string[] }> {
     const running = this.instances().flatMap((i) => {
       const base = localBase(i.host, i.port);
       return base === undefined ? [] : [{ dir: i.dir, base }];
@@ -76,25 +95,28 @@ export class Client {
       // `eda serve` recorded it.
       const abs = resolve(this.cwd, dir);
       const want = existsSync(abs) ? realpathSync(abs) : abs;
-      return running.filter((r) => r.dir === want).map((r) => ({ ...r, attach: true }));
+      return { mine: running.filter((r) => r.dir === want).map((r) => ({ ...r, attach: true })), stale: [] };
     }
     const mine: Target[] = [];
+    const stale: string[] = [];
     for (const r of running) {
       try {
-        // /api/rev, not /api/state: this runs for every running map on every channel pass.
-        const s = (await this.call(r, '/api/rev')) as { sessions: string[] };
+        // /api/ai/rev, not /api/ai/state: this runs for every running map on every channel pass.
+        const s = (await this.call(r, '/api/ai/rev')) as { sessions: string[] };
         if (s.sessions.includes(this.session)) mine.push(r);
-      } catch {
-        /* a server going down between the listing and the call */
+      } catch (err) {
+        // Anything else is a server going down between the listing and the call.
+        if (err instanceof StaleServer) stale.push(r.dir);
       }
     }
-    return mine;
+    return { mine, stale };
   }
 
   async one(dir?: string): Promise<Target> {
-    const ts = await this.targets(dir);
+    const { mine: ts, stale } = await this.scan(dir);
     if (ts.length === 1) return ts[0]!;
     if (ts.length === 0) {
+      if (stale.length > 0) throw new Error(`no running map for this session; these do not take its calls: ${stale.join(', ')}. ${STALE_HINT}`);
       throw new Error(
         dir === undefined
           ? 'no running map for this session. Start one with `eda serve <dir> --title "<theme>"`, or pass `map`.'
@@ -257,9 +279,9 @@ export async function runMcp(): Promise<void> {
           // A recorded position that failed to save is retried every pass until it sticks;
           // otherwise a restart would replay what was already delivered.
           await ack(t);
-          const { rev } = (await client.call(t, '/api/rev')) as { rev: number };
+          const { rev } = (await client.call(t, '/api/ai/rev')) as { rev: number };
           if (revs.get(t.dir) === rev) continue;
-          const state = (await client.call(t, '/api/state')) as { doc: MapDoc };
+          const state = (await client.call(t, '/api/ai/state')) as { doc: MapDoc };
           for (const c of undelivered(state.doc, session, cursor.get(t.dir))) {
             await mcp.notification({ method: 'notifications/claude/channel', params: describe(t.dir, c, state.doc) });
             // Advanced once the notification is written. Claude Code does not acknowledge

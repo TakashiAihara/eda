@@ -83,7 +83,7 @@ sequenceDiagram
 
 ## Known limits
 
-- The person's routes and the AI's share one token (issue #2). The new dispatch route widens what the AI could do from the shell: start a session, not only adopt a node. Closing #2 closes this too.
+- The dispatch route takes the person's token, which the MCP server does not hold (#2). A session with a shell can still read that token (the known limit in 0001), and with it start a session, not only adopt a node.
 - The status shown is up to 30 s old.
 - The duplicate-dispatch guard is per running map: the same task linked in two maps that are both open can be dispatched twice at once.
 - A create whose request reached kaneo but whose answer was lost (timeout, broken connection) is reported as a kaneo failure; the task may exist in kaneo without a link. Check the project before retrying.
