@@ -1,4 +1,7 @@
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as joinPath } from 'node:path';
 import {
   accept,
   addChild,
@@ -20,6 +23,16 @@ import {
   setMarker,
   toOutlineForAi,
 } from '../src/map.ts';
+
+const made: string[] = [];
+const temp = (prefix: string): string => {
+  const d = mkdtempSync(joinPath(tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
+afterAll(() => {
+  for (const d of made) rmSync(d, { recursive: true, force: true });
+});
 
 const ai = { by: 'ai' as const, session: 'S1' };
 
@@ -437,9 +450,9 @@ test('a task description carries what a session needs without the map', () => {
 
 test('a map directory can be claimed by one live process at a time', async () => {
   const { lockMap } = await import('../src/store.ts');
-  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
-  const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'eda-lock-'));
+  const dir = temp('eda-lock-');
   const release = lockMap(dir);
   expect(typeof release).toBe('function');
   expect(lockMap(dir)).toBe(process.pid);
@@ -449,9 +462,9 @@ test('a map directory can be claimed by one live process at a time', async () =>
 });
 
 test('processes racing for one map directory: exactly one wins', async () => {
-  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
-  const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'eda-race-'));
+  const dir = temp('eda-race-');
   const go = join(dir, 'go');
   // A dead owner's lock is there first, so every racer goes through the takeover.
   writeFileSync(join(dir, 'eda.lock'), '999999999');
