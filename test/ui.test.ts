@@ -13,7 +13,7 @@ process.env['EDA_HOME'] = home;
 process.env['XDG_CONFIG_HOME'] = home;
 // Imported after the home is set, so nothing the import does on its own can see the real one.
 const { startServer } = await import('../src/server.ts');
-const { token } = await import('../src/store.ts');
+const { aiToken, token } = await import('../src/store.ts');
 
 type UNode = { id: string; text: string; children: UNode[]; collapsed?: boolean; markers?: string[] };
 
@@ -32,6 +32,7 @@ const ui = async (): Promise<{
   page: Page;
   call: (method: string, path: string, body?: unknown) => Promise<any>;
   add: (parentId: string, text: string) => Promise<UNode>;
+  suggest: (parentId: string, text: string) => Promise<void>;
   map: () => Promise<UNode>;
   open: () => Promise<void>;
 }> => {
@@ -61,6 +62,15 @@ const ui = async (): Promise<{
     page,
     call,
     add: async (parentId: string, text: string) => (await call('POST', '/api/nodes', { parentId, text })) as UNode,
+    // As the MCP server sends one: the AI's token and a session of its own.
+    suggest: async (parentId: string, text: string) => {
+      const r = await fetch(`${base}/api/ai/suggest`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${aiToken()}`, 'content-type': 'application/json', 'x-eda-session': 'S-ui' },
+        body: JSON.stringify({ kind: 'add', parentId, text, reason: '' }),
+      });
+      if (!r.ok) throw new Error(`suggest: ${r.status} ${await r.text()}`);
+    },
     map: async () => ((await call('GET', '/api/state')) as { doc: { root: UNode } }).doc.root,
     open: async () => {
       // The token arrives in the fragment once; the page keeps it from then on.
@@ -543,6 +553,41 @@ test('a folded node at the level limit opens with a click and its children are d
   // Unfolded on the server and drawn on the page: opening it has to reach past the limit too.
   await until('stay unfolded on the server', async () => child(await map(), 'stay').collapsed !== true);
   await drawn(page, ['trip', 'stay', 'hotel', 'fly']);
+}, 20_000);
+
+test('the count at a level limit takes in the suggestions waiting there, folded or not', async () => {
+  const { page, call, add, suggest, map, open } = await ui();
+  const trip = await map();
+  const stay = await add(trip.id, 'stay');
+  const hotel = await add(stay.id, 'hotel');
+  await add(trip.id, 'fly');
+  // Two ideas waiting under stay and one under hotel, as the AI side sends them.
+  await suggest(stay.id, 'ryokan');
+  await suggest(stay.id, 'hostel');
+  await suggest(hotel.id, 'breakfast');
+  await open();
+
+  // The node's own button, not the reject buttons of the ideas drawn under it.
+  const foldOf = (id: string) => page.locator(`.node[data-id="${id}"]`).locator('xpath=..').locator(':scope > button.fold');
+  await page.locator(`.node[data-id="${trip.id}"]`).click();
+  // Cut at stay: its one child and the two ideas under it are what is hidden there.
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  expect(await foldOf(stay.id).textContent()).toBe('+3');
+  // Cut at hotel: the idea under it, and no hotel child, since it has none.
+  await page.keyboard.press('Alt+2');
+  await drawn(page, ['trip', 'stay', 'hotel', 'ryokan', 'hostel', 'fly']);
+  expect(await foldOf(hotel.id).textContent()).toBe('+1');
+
+  // Folded at the cut: the same count, from the fold button.
+  await page.keyboard.press('Alt+0');
+  await call('PATCH', `/api/nodes/${stay.id}`, { collapsed: true });
+  // Folded, the ideas still show under it (only the cut hides them), and the count is its child alone.
+  await drawn(page, ['trip', 'stay', 'ryokan', 'hostel', 'fly']);
+  expect(await foldOf(stay.id).textContent()).toBe('+1');
+  await page.keyboard.press('Alt+1');
+  await drawn(page, ['trip', 'stay', 'fly']);
+  expect(await foldOf(stay.id).textContent()).toBe('+3');
 }, 20_000);
 
 test('when kaneo refuses the project list, the node panel says why and offers another try', async () => {
