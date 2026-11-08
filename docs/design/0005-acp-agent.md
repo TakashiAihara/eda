@@ -74,7 +74,7 @@ sequenceDiagram
 
 ## The agent
 
-- Configured per host in `~/.config/eda/config.json` as named argv lists; `eda serve <dir> --agent <name>` picks one. No `--agent`, no agent: the map works as today.
+- Configured per host in `~/.config/eda/config.json` as named argv lists, `"agents": { "devin": ["devin", "acp"] }`; `eda serve <dir> --agent <name>` picks one. No `--agent`, no agent: the map works as today. The key names the agent, not the protocol, because the agent is what the person picks.
 - Started at the first chat line, not at `eda serve`, so a map that is only looked at costs no agent process.
 - Runs with `cwd` set to the map directory's parent, never the map directory itself, so a relative write the agent makes on its own does not land on `eda.json`. This narrows a mistake; it does not stop a deliberate write (see Known limits).
 - Its environment is `eda serve`'s minus `KANEO_API_KEY`: the agent reads the person's map and the web, and a key it never needs should not be in its reach.
@@ -85,7 +85,7 @@ sequenceDiagram
 
 - `eda mcp` reads its session from `CLAUDE_CODE_SESSION_ID` today. For an agent, eda passes `EDA_SESSION=acp-<random>` in the `env` of the MCP server it hands to `session/new`; `eda mcp` reads `EDA_SESSION` first.
 - eda makes the key itself because the agent's `sessionId` is only known after `session/new`, and the MCP server is part of that request.
-- The key is recorded in the map's `sessions` like a Claude Code session, with `kind: "acp"`, the agent's name and its `sessionId`. Its `eda mcp` does not run the channel loop: messages reach the agent as prompts.
+- The key is recorded in the map's `sessions` like a Claude Code session, with `kind: "acp"`, `agent` (its name) and `acpSessionId` (the agent's `sessionId`). Its `eda mcp` does not run the channel loop: messages reach the agent as prompts.
 
 ## Prompts
 
