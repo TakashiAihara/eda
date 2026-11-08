@@ -10,7 +10,7 @@ Status: proposed. kaneo eda#53.
 
 ## Conclusion
 
-- Keep the channel. Add ACP as a second way in: `eda serve` starts one agent per map as its ACP client and talks to it on the person's behalf.
+- Two modes, both kept as first-class: **channel mode** (today: the map talks to the Claude Code session that started it) and **ACP mode** (`eda serve` starts one agent per map as its ACP client and talks to it on the person's behalf). Neither replaces the other; which one fits depends on the case (see Choosing a mode).
 - The agent gets `eda mcp` as an MCP server in `session/new`, so it uses the same four tools (read, suggest a node, suggest a change, reply) with the same `ai-token`. The rule does not change: one suggestion is one node or one change, three wait at most, only the person adopts.
 - The person's chat line becomes a `session/prompt`; the agent's answer text becomes the AI's chat line. An adopt or reject is told to the agent in the next prompt rather than in a turn of its own.
 - The AI still cannot write to the map for the same reason as today: the MCP server holds only `ai-token`. Answering the agent's permission requests does not add to that guarantee (measured below), so it is not claimed.
@@ -32,6 +32,21 @@ On d1, 2026-11-08, with a throwaway `EDA_HOME` and map, a probe client spoke ACP
 
 - So answering permission requests is not a boundary: an agent decides which calls it asks about, and one that runs in a bypass mode asks about none.
 - And the agent is not limited to eda's tools: it brings its own tools and its own MCP servers.
+
+## Choosing a mode
+
+| | channel mode | ACP mode |
+|---|---|---|
+| Who the AI is | the Claude Code session the person is already in | an agent eda starts (devin, opencode, …) |
+| Started by | the session running `eda serve` | `eda serve --agent <name>` (picked per map) |
+| Conversation | the person's existing one: what the session already knows is there | a new one per `eda serve` start; it knows the map only through the tools |
+| Startup cost | none beyond the session already running | a new agent process and its own startup context (its instructions, its config's MCP servers) once per start |
+| Per-message cost | one channel event in a long conversation | one prompt turn; the agent's prefix is re-read each turn, mostly from its prompt cache (devin: 34,304 of 34,448 input tokens cached on one probe turn) |
+| Depends on | Claude Code's channel preview flag | the agent speaking ACP |
+
+- Channel mode fits a map that grows out of work already going on in a session, and keeps the token cost of a session that is running anyway.
+- ACP mode fits a map started on its own, an AI other than Claude Code, or a host where the preview flag is not wanted.
+- What the agent reads at startup (its instructions files, the person's profile) is the agent's own config, not something eda passes. eda adds only its MCP server and the prompts. A devin that imports the Claude Code config (`read_config_from`) brings those files and MCP servers with it.
 
 ## Flow
 
