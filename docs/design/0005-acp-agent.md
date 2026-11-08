@@ -1,6 +1,6 @@
-# Talking to the map through ACP, next to the channel
+# Talking to the map through ACP, next to the channel (roadmap)
 
-Status: proposed. kaneo eda#53.
+Status: deferred. Not built now; kept as the plan for when ACP agents make it easier (see Revisit when). kaneo eda#53.
 
 ## Background
 
@@ -9,6 +9,12 @@ Status: proposed. kaneo eda#53.
 - ACP (Agent Client Protocol) is JSON-RPC over stdio between a client and an agent it starts as a child process. Agents that speak it on this host: `devin acp`, `opencode acp`, `gemini --acp`, `qwen --acp`, `goose acp`, `copilot --acp`; Claude Code through the adapter `@agentclientprotocol/claude-agent-acp`.
 
 ## Conclusion
+
+- Not now. The channel stays the only way in. The owner chose to stop here after the measurements below (2026-11-08: 「ACP いったんやめていい気がしてきたな。ロードマップてきな感じで書いておいてもらおうかな。今後 拡充されて色々やりやすくなる可能性あり。。。」).
+- The main reason: an ACP agent brings its own file and shell tools and its own MCP servers, and eda's answers to its permission requests do not stop it from writing (measured below). ACP mode would give no better guarantee than the channel does, with more moving parts.
+- The rest of this document is the plan if it is picked up again.
+
+## The plan
 
 - Two modes, both kept as first-class: **channel mode** (today: the map talks to the Claude Code session that started it) and **ACP mode** (`eda serve` starts one agent per map as its ACP client and talks to it on the person's behalf). Neither replaces the other; which one fits depends on the case (see Choosing a mode).
 - The agent gets `eda mcp` as an MCP server in `session/new`, so it uses the same four tools (read, suggest a node, suggest a change, reply) with the same `ai-token`. The rule does not change: one suggestion is one node or one change, three wait at most, only the person adopts.
@@ -102,6 +108,16 @@ sequenceDiagram
 ## README and the contribution rule
 
 - The README's "the same Claude Code session" stays true for the channel and gains a second paragraph for agents. The contribution rule is unchanged.
+
+## Revisit when
+
+Any one of these makes ACP mode worth building; check them against the agent's current version first.
+
+- An agent can be started over ACP with no tools of its own and only the MCP servers the client passes. `devin acp --agent-type summarizer` is described as a tool-less profile; whether it still uses the passed MCP servers is not measured.
+- Permission answers become a boundary: the agent asks before every write and does not retry a rejected write through another tool.
+- An agent's config import can be turned off per ACP session, so the person's own MCP servers do not come along (devin: `read_config_from`, per host today).
+- Claude Code's channel leaves preview or changes shape, so the channel mode itself needs a replacement.
+- Claude Code through `claude-agent-acp` is measured with the person's bypass setting.
 
 ## Known limits
 
