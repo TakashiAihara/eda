@@ -20,7 +20,7 @@ Status: deferred. Not built now; kept as the plan for when ACP agents make it ea
 - Two modes, both kept as first-class: **channel mode** (today: the map talks to the Claude Code session that started it) and **ACP mode** (`eda serve` starts one agent per map as its ACP client and talks to it on the person's behalf). Neither replaces the other; which one fits depends on the case (see Choosing a mode).
 - The agent gets `eda mcp` as an MCP server in `session/new`, so it uses the same four tools (read, suggest a node, suggest a change, reply) with the same `ai-token`. The rule does not change: one suggestion is one node or one change, three wait at most, only the person adopts.
 - The person's chat line becomes a `session/prompt`; the agent's answer text becomes the AI's chat line. An adopt or reject is told to the agent in the next prompt rather than in a turn of its own.
-- The AI still cannot write to the map for the same reason as today: the MCP server holds only `ai-token`. Answering the agent's permission requests does not add to that guarantee (measured below), so it is not claimed.
+- The AI still cannot write to the map through eda's tools, for the same reason as today: the MCP server holds only `ai-token`. Outside them it can, as today (see Known limits). Answering the agent's permission requests does not add to that guarantee (measured below), so it is not claimed.
 - A map has either a channel session or an ACP agent talking to it, or both; they are separate sessions with separate suggestion slots.
 
 ## What was measured
@@ -126,7 +126,7 @@ From the review of PR #51; each needs an answer in the doc before building.
 
 - Both modes on one map: does `--agent` turn off channel delivery for that map, or do both AIs get every line? How does the chat tell their lines apart?
 - The session key's lifetime: per `eda serve` run, per agent process or per `session/new`; and what happens to an old key's undecided suggestions after a crash or restart (they keep using slots under a key no agent holds).
-- The agent's environment: an allowlist (`PATH`, `HOME`, locale) rather than removing `KANEO_API_KEY` alone, since the agent's imported config carries other credentials anyway. `eda mcp` reads `ai-token` from `$EDA_HOME` (default `~/.eda`), not from the environment, so it does not lose anything.
+- The agent's environment: an allowlist (`PATH`, `HOME`, locale, and `EDA_HOME`, without which `eda mcp` looks in `~/.eda` and finds neither the map nor `ai-token`) rather than removing `KANEO_API_KEY` alone, since the agent's imported config carries other credentials anyway. `eda mcp` reads `ai-token` from `$EDA_HOME` (default `~/.eda`), not from the environment, so it does not lose anything.
 - A turn's end: show `stopReason` other than `end_turn` (refusal, max tokens, cancelled); a turn timeout; what a cancel does to partial text and queued lines.
 - Failure kinds: spawn failure, authentication required, protocol error and a crash mid-turn each need their own handling, not one "crash" bucket.
 - Provenance: what goes in an adopted node's `model` when the agent does not report one.
