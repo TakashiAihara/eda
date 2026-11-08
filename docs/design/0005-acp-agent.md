@@ -12,6 +12,7 @@ Status: deferred. Not built now; kept as the plan for when ACP agents make it ea
 
 - Not now. The channel stays the only way in. The owner chose to stop here after the measurements below (2026-11-08: 「ACP いったんやめていい気がしてきたな。ロードマップてきな感じで書いておいてもらおうかな。今後 拡充されて色々やりやすくなる可能性あり。。。」).
 - The main reason: an ACP agent brings its own file and shell tools and its own MCP servers, and eda's answers to its permission requests do not stop it from writing (measured below). ACP mode would give no better guarantee than the channel does, with more moving parts.
+- And less visibility: in channel mode the person sees the AI's tool calls in their own Claude Code session; in ACP mode as planned, the agent's tool calls are not shown, so what it did reaches the person only as its own account in the chat.
 - The rest of this document is the plan if it is picked up again.
 
 ## The plan
@@ -89,7 +90,7 @@ sequenceDiagram
 
 ## The session key
 
-- `eda mcp` reads its session from `CLAUDE_CODE_SESSION_ID` today. For an agent, eda passes `EDA_SESSION=acp-<random>` in the `env` of the MCP server it hands to `session/new`; `eda mcp` reads `EDA_SESSION` first.
+- `eda mcp` reads its session from `CLAUDE_CODE_SESSION_ID` today. For an agent, eda passes `EDA_SESSION=acp-<id>` (a random id) in the `env` of the MCP server it hands to `session/new`; `eda mcp` reads `EDA_SESSION` first.
 - eda makes the key itself because the agent's `sessionId` is only known after `session/new`, and the MCP server is part of that request.
 - The key is recorded in the map's `sessions` like a Claude Code session, with `kind: "acp"`, `agent` (its name) and `acpSessionId` (the agent's `sessionId`). Its `eda mcp` does not run the channel loop: messages reach the agent as prompts.
 
@@ -113,11 +114,24 @@ sequenceDiagram
 
 Any one of these makes ACP mode worth building; check them against the agent's current version first.
 
-- An agent can be started over ACP with no tools of its own and only the MCP servers the client passes. `devin acp --agent-type summarizer` is described as a tool-less profile; whether it still uses the passed MCP servers is not measured.
+- An agent can be started over ACP with no tools of its own and only the MCP servers the client passes. `devin acp --agent-type summarizer` is a tool-less profile by devin's own `--help`; whether it still uses the passed MCP servers is not measured.
 - Permission answers become a boundary: the agent asks before every write and does not retry a rejected write through another tool.
 - An agent's config import can be turned off per ACP session, so the person's own MCP servers do not come along (devin: `read_config_from`, per host today).
 - Claude Code's channel leaves preview or changes shape, so the channel mode itself needs a replacement.
 - Claude Code through `claude-agent-acp` is measured with the person's bypass setting.
+
+## Open questions for when this is picked up
+
+From the review of PR #51; each needs an answer in the doc before building.
+
+- Both modes on one map: does `--agent` turn off channel delivery for that map, or do both AIs get every line? How does the chat tell their lines apart?
+- The session key's lifetime: per `eda serve` run, per agent process or per `session/new`; and what happens to an old key's undecided suggestions after a crash or restart (they keep using slots under a key no agent holds).
+- The agent's environment: an allowlist (`PATH`, `HOME`, locale) rather than removing `KANEO_API_KEY` alone, since the agent's imported config carries other credentials anyway. `eda mcp` reads `ai-token` from `$EDA_HOME` (default `~/.eda`), not from the environment, so it does not lose anything.
+- A turn's end: show `stopReason` other than `end_turn` (refusal, max tokens, cancelled); a turn timeout; what a cancel does to partial text and queued lines.
+- Failure kinds: spawn failure, authentication required, protocol error and a crash mid-turn each need their own handling, not one "crash" bucket.
+- Provenance: what goes in an adopted node's `model` when the agent does not report one.
+- Where the data goes: picking an agent picks the vendor that receives the map and the chat; say so in Choosing a mode.
+- Permission answers for agents whose requests eda cannot read: rejecting everything makes eda's own tools unusable.
 
 ## Known limits
 
